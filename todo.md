@@ -26,12 +26,13 @@ Design settled; implementation in progress.
       27/28 basic corpus/arity combos (one verified utility tie) and on
       nuts-bolts/wheels/dials. Caveat for rewrite stage: num_uses counts
       ALL match locations; used/unused split untested by iteration-1 diffs.
-- [ ] src/rewrite.rkt — greedy top-down rewrite + mismatch assert (in progress)
-- [ ] src/compress.rkt — iteration loop, JSON I/O, CLI (in progress)
-- [ ] tests/differential.rkt — compare against real binary on data/basic
-      (in progress)
-- [ ] Differential pass on all of stitch/data/basic (arity 2 and 3, iterations 1-3)
-- [ ] Differential pass on nuts-bolts (realistic scale)
+- [x] src/rewrite.rkt — greedy top-down rewrite + mismatch assert
+- [x] src/compress.rkt — iteration loop, JSON I/O, CLI
+- [x] tests/differential.rkt — compare against real binary on data/basic
+- [x] Differential pass: 21 basic corpora x {arity 2,3} x {iters 1,3} =
+      83 MATCH / 2 TIE (verified genuine) / 0 FAIL
+- [x] Differential pass on nuts-bolts: full match incl. all 250 rewritten
+      programs; mini ~1s of work per run
 - [ ] src/micro.rkt (in progress) — unoptimized executable spec (~200-300 lines): naive
       worklist enumeration, matching from scratch, utility by actually
       rewriting (bottom-up DP). Keeps only the semantic filters: zero-match
