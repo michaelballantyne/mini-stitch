@@ -6,7 +6,12 @@ Real implementation map: notes/2026-08-17-1844-rust-implementation-map.md
 
 ## Current status
 
-Design settled; implementation in progress.
+COMPLETE. All modules implemented, documented, and differentially validated
+against the real binary (85 runs: 83 MATCH / 2 TIE / 0 FAIL; nuts-bolts full
+match). Micro-stitch oracle agrees everywhere feasible and uncovered a genuine
+utility over-count bug in real stitch (see notes/2026-08-17-2030). Possible
+future work: report the stitch bug upstream (Michael's call); optionally add
+fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
 
 ## Steps
 
@@ -40,6 +45,7 @@ Design settled; implementation in progress.
       over-count bug in REAL stitch (multiuse x nested matches; stitch
       panics on its own assert) — see
       notes/2026-08-17-2030-stitch-utility-overcount-bug.md.
-- [ ] walkthrough.md — end-to-end trace of a small example; present micro
-      first, then mini as "the same thing, made fast"
-- [ ] Final review pass; README
+- [x] walkthrough.md — the paper's Section 2 running example traced through
+      micro then mini, with real measured numbers; anti-unification lens; coda
+      on known divergences
+- [x] Final review pass; README
