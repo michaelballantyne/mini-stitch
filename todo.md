@@ -26,5 +26,12 @@ Design settled; implementation in progress.
 - [ ] tests/differential.rkt — compare against real binary on data/basic
 - [ ] Differential pass on all of stitch/data/basic (arity 2 and 3, iterations 1-3)
 - [ ] Differential pass on nuts-bolts (realistic scale)
-- [ ] walkthrough.md — end-to-end trace of a small example
+- [ ] src/micro.rkt — unoptimized executable spec (~200-300 lines): naive
+      worklist enumeration, matching from scratch, utility by actually
+      rewriting (bottom-up DP). Keeps only the semantic filters: zero-match
+      termination, >=2-programs, free-var ban, capture rejection, argument
+      capture (semantic per paper footnote 2). Differential-test micro vs mini
+      on tiny corpora as a second oracle.
+- [ ] walkthrough.md — end-to-end trace of a small example; present micro
+      first, then mini as "the same thing, made fast"
 - [ ] Final review pass; README

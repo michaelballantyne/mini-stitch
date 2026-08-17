@@ -197,3 +197,28 @@ Open parity details to verify against the Rust during implementation:
 3. stitch's printed body format and out.json field names
 4. whether `num-paths` for the upper bound uses `cost_of_node_all` before or
    after shifted copies are added (map §1 says before; verify)
+
+## Addendum (settled later on 2026-08-17): micro-stitch
+
+Also build `src/micro.rkt`: a semantically-equivalent, unoptimized executable
+spec (~200-300 lines) for the smallest corpora only. Design:
+- Utility BY REWRITING: utility = cost(P) - cost(Rewrite(P,A)) - cost(A), with
+  the paper's bottom-up accept/reject DP as the rewriter. This eliminates the
+  analytic utility formula, multiuse accounting, overlap correction, and
+  unused-locations bookkeeping.
+- The paper's naive enumeration: FIFO worklist from ??, all hole productions,
+  match locations recomputed from scratch with a LambdaUnify-style matcher.
+  Plain trees + equal?; no hash-consing, no incremental match lists, no
+  priority queue, no upper bound.
+- Retained because they are SEMANTIC, not speed: zero-match pruning (finiteness/
+  termination), >=2-distinct-programs filter, free-var-in-body ban, capture
+  rejection of match locations, de Bruijn shift machinery, and ARGUMENT CAPTURE
+  pruning (paper footnote 2: stitch optimizes subject to all argument captures
+  applied, so dropping it could yield a different, slightly better abstraction
+  than real stitch).
+- Dropped as genuinely dominance-safe: redundant-argument elimination,
+  single-use pruning, arity-zero priming (arity-0 candidates arise naturally).
+- Role: second differential oracle (micro vs mini on tiny corpora) alongside
+  mini vs real binary; pedagogical baseline. Walkthrough presents micro first,
+  then mini as "the same thing, made fast". Shares parser/printer with mini
+  (import from expr.rkt).
