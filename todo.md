@@ -33,12 +33,13 @@ Design settled; implementation in progress.
       83 MATCH / 2 TIE (verified genuine) / 0 FAIL
 - [x] Differential pass on nuts-bolts: full match incl. all 250 rewritten
       programs; mini ~1s of work per run
-- [ ] src/micro.rkt (in progress) — unoptimized executable spec (~200-300 lines): naive
-      worklist enumeration, matching from scratch, utility by actually
-      rewriting (bottom-up DP). Keeps only the semantic filters: zero-match
-      termination, >=2-programs, free-var ban, capture rejection, argument
-      capture (semantic per paper footnote 2). Differential-test micro vs mini
-      on tiny corpora as a second oracle.
+- [x] src/micro.rkt — unoptimized executable spec (241 loc + extensive
+      comments/tests): naive enumeration, matching from scratch, utility by
+      rewriting (bottom-up DP). Agrees with mini AND the real binary on all
+      tested corpora. Fuzzing micro-vs-mini uncovered a genuine utility
+      over-count bug in REAL stitch (multiuse x nested matches; stitch
+      panics on its own assert) — see
+      notes/2026-08-17-2030-stitch-utility-overcount-bug.md.
 - [ ] walkthrough.md — end-to-end trace of a small example; present micro
       first, then mini as "the same thing, made fast"
 - [ ] Final review pass; README

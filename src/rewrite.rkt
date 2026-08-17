@@ -153,6 +153,20 @@
 ;; The oracle: rewriting must save exactly the compressive utility the search
 ;; predicted.  Raise a loud, informative error if it did not
 ;; (rewriting.rs:144-152).
+;;
+;; One family of corpora is KNOWN to reach this error, in mini-stitch and in
+;; real stitch alike (which panics on its own version of the assert): a
+;; multiply-used abstraction variable whose argument contains further matches
+;; of the same pattern, e.g. the pattern (#0 #0) on the self-similar corpus
+;; ["(((a a) (a a)) ((a a) (a a)))", "((a f) (a f))"].  Rewriting at an outer
+;; match deletes the duplicate argument copies -- and the nested matches
+;; inside them -- but the search credited those nested matches once per
+;; occurrence.  The self-overlap correction misses this because it skips
+;; variable positions, which is normally right (the rewriter descends into
+;; arguments) but wrong when a multiuse variable keeps only one copy.  We
+;; reproduce stitch's accounting faithfully, so we reproduce its failure;
+;; micro.rkt, which computes utility by rewriting, gets these corpora right.
+;; See notes/2026-08-17 on the discovered stitch bug.
 (define (check-cost-mismatch c a out roots)
   (define before (for/sum ([r (in-list (corpus-roots c))]) (cost c r)))
   (define after (for/sum ([r (in-list roots)]) (cost out r)))
