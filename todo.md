@@ -7,7 +7,7 @@ Real implementation map: notes/2026-08-17-1844-rust-implementation-map.md
 ## Current status
 
 COMPLETE. All modules implemented, documented, and differentially validated
-against the real binary (85 runs: 83 MATCH / 2 TIE / 0 FAIL; nuts-bolts full
+against the real binary (87 runs: 85 MATCH / 2 TIE / 0 FAIL; nuts-bolts full
 match). Micro-stitch oracle agrees everywhere feasible and uncovered a genuine
 utility over-count bug in real stitch (see notes/2026-08-17-2030). Possible
 future work: report the stitch bug upstream (Michael's call); optionally add
@@ -35,8 +35,9 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
 - [x] src/rewrite.rkt — greedy top-down rewrite + mismatch assert
 - [x] src/compress.rkt — iteration loop, JSON I/O, CLI
 - [x] tests/differential.rkt — compare against real binary on data/basic
-- [x] Differential pass: 21 basic corpora x {arity 2,3} x {iters 1,3} =
-      83 MATCH / 2 TIE (verified genuine) / 0 FAIL
+- [x] Differential pass: 21 basic corpora x {arity 2,3} x {iters 1,3} plus
+      nuts-bolts/wheels/dials = 87 runs: 85 MATCH / 2 TIE (verified genuine) /
+      0 FAIL. Ties excuse only themselves; unexpected ties fail the suite.
 - [x] Differential pass on nuts-bolts: full match incl. all 250 rewritten
       programs; mini ~1s of work per run
 - [x] src/micro.rkt — unoptimized executable spec (241 loc + extensive
@@ -50,3 +51,9 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
       micro then mini, with real measured numbers; anti-unification lens; coda
       on known divergences
 - [x] Final review pass; README
+- [x] Adversarial review (Fable subagent) — notes/2026-08-17-2110; all
+      findings fixed: walkthrough section 6 lgg claim corrected, penalty
+      divergence signposted, README overclaim fixed, tie enforcement made
+      real (unexpected ties and pre-tie mismatches now FAIL), wheels/dials
+      added to the suite, deterministic fuzzer checked in (tests/fuzz.rkt),
+      stale notes corrected

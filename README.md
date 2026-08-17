@@ -11,7 +11,7 @@ constant-factor engineering are deliberately out of scope; the de Bruijn
 machinery, the branch-and-bound, and stitch's exact utility accounting are not.
 
 The code was written with AI assistance and is **differentially tested against
-the real stitch binary**: 85 runs over stitch's own corpora, comparing
+the real stitch binary**: 87 runs over stitch's own corpora, comparing
 abstraction bodies, arities, utilities, use counts, costs and rewritten programs.
 
 **Start with [`walkthrough.md`](walkthrough.md)**, which traces the paper's own
@@ -38,6 +38,9 @@ src/compress.rkt    the iteration loop, JSON I/O, command-line entry point
 tests/differential.rkt   runs mini-stitch and the real binary on the same
                     corpora and compares; unit tests live in `module+ test`
                     blocks beside the code they test
+tests/fuzz.rkt      deterministic seeded fuzzer: mini's claimed utility
+                    checked against micro's by-rewriting measurement on
+                    random corpora (how the stitch bug was found)
 notes/              design notes, a digest of the paper, a map of the Rust
                     implementation, and the write-up of a bug found in stitch
 stitch/             git submodule: the real stitch implementation
@@ -77,11 +80,19 @@ cd stitch && cargo build --release
 
 ## Results
 
-`raco test src/ tests/` — 77 test cases, all passing, including:
+`raco test src/ tests/` — 81 test cases, all passing, including:
 
-* **85 differential runs**: 21 corpora of `stitch/data/basic` × {max-arity 2, 3}
+* **87 differential runs**: 21 corpora of `stitch/data/basic` × {max-arity 2, 3}
   × {1, 3 iterations}, plus `cogsci/nuts-bolts.json` (250 programs, arity 2, 3
-  iterations). **83 MATCH, 2 TIE, 0 FAIL.**
+  iterations) and `cogsci/wheels.json` / `cogsci/dials.json` (arity 2, 1
+  iteration). **85 MATCH, 2 TIE, 0 FAIL.** A tie excuses only itself: any
+  other mismatch in the same run, or a tie not on the known-ties list, fails
+  the suite.
+* **a deterministic fuzzer** (`tests/fuzz.rkt`, seeded): mini's claimed utility
+  checked against micro's by-rewriting measurement on hundreds of random
+  corpora per run — zero disagreements on unbiased corpora, and on
+  self-similar corpora the known stitch over-count reproduces, always as an
+  over-count, never an under-count.
 * `nuts-bolts` matches in full: every abstraction, every utility, every one of
   the 250 rewritten programs, at ~3 s for three iterations.
 * micro-stitch agrees with mini-stitch, and with the real binary, on every

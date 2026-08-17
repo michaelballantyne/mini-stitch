@@ -791,7 +791,7 @@ worklist is not the real one's (no threads, no batching, a different heap). On
 `(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))` and mini picks
 `(A (lam (lam (+ (a b #0 $0 $1 f) (a b #0 $0 $1 f)))))`, both with utility 1213.
 `tests/differential.rkt` reports that as TIE rather than FAIL, and only when the
-utilities are equal. It is the only tie in the suite — showing up in 2 of the 85
+utilities are equal. It is the only tie in the suite — showing up in 2 of the 87
 runs, the same corpus and arity at both iteration settings — and it is listed
 explicitly in `known-ties` so that a *new* tie shows up as something to look at
 rather than as noise.
