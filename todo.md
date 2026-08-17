@@ -27,10 +27,11 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
       Fused-lambda tags unsupported (simple3/4/5 out of scope).
 - [x] src/pattern.rkt — patterns as trees with holes, match machinery,
       self-overlap detection (replaces ziptrie with ordinary unification)
-- [x] src/search.rkt — branch-and-bound. Matches real binary exactly on
-      27/28 basic corpus/arity combos (one verified utility tie) and on
-      nuts-bolts/wheels/dials. Caveat for rewrite stage: num_uses counts
-      ALL match locations; used/unused split untested by iteration-1 diffs.
+- [x] src/search.rkt — branch-and-bound. (Interim figure at this stage was
+      27/28 basic corpus/arity combos at iterations=1, plus nuts-bolts/
+      wheels/dials spot checks; the final reproducible figures are the
+      differential suite's, below. wheels/dials are now in the checked-in
+      suite at arity 2.)
 - [x] src/rewrite.rkt — greedy top-down rewrite + mismatch assert
 - [x] src/compress.rkt — iteration loop, JSON I/O, CLI
 - [x] tests/differential.rkt — compare against real binary on data/basic

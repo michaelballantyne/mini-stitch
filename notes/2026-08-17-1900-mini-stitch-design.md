@@ -216,8 +216,12 @@ spec (~200-300 lines) for the smallest corpora only. Design:
   pruning (paper footnote 2: stitch optimizes subject to all argument captures
   applied, so dropping it could yield a different, slightly better abstraction
   than real stitch).
-- Dropped as genuinely dominance-safe: redundant-argument elimination,
-  single-use pruning, arity-zero priming (arity-0 candidates arise naturally).
+- Dropped as genuinely dominance-safe: single-use pruning, arity-zero priming
+  (arity-0 candidates arise naturally). [Update, post-implementation: the plan
+  also listed redundant-argument elimination here, but micro.rkt KEEPS it — it
+  is dominance-safe so dropping it would not change the optimum, but keeping
+  it costs a few lines and makes micro's tie-breaking agree with mini more
+  often. See micro.rkt's header.]
 - Role: second differential oracle (micro vs mini on tiny corpora) alongside
   mini vs real binary; pedagogical baseline. Walkthrough presents micro first,
   then mini as "the same thing, made fast". Shares parser/printer with mini

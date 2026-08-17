@@ -73,7 +73,16 @@ utility(A) = cost(corpus) - cost(rewrite(corpus, A)) - cost(A)
 — what rewriting saves, less the size of the abstraction itself (stitch's
 structure penalty, weight 1). In the abstraction's own cost, abstraction
 variables are free of charge (`term-cost` gives `(ivar i)` cost 0): they are
-parameters, not structure. That is the paper's `cost_{α=0}`.
+parameters, not structure. The function is the paper's `cost_{α=0}` (defined
+after Eq. 9) — but note this is one more place where we follow the
+implementation against the paper's letter, in the same category as sentinels
+instead of `&i` and the greedy rewrite instead of the DP. The paper's utility
+(Eq. 8) charges the abstraction at full `cost(A)` with `cost_α = 100` in the
+experimental configuration, which on `simple1` would give `202 − 302 = −100`;
+real stitch charges `−cost_{α=0}(A)` (its `noncompressive_utility` is minus the
+body's concrete cost, with ivar expansions contributing nothing), which gives
+the `200` that both implementations and the binary report. Reconciling Eq. 8
+against the code requires knowing this substitution.
 
 Both implementations also inherit two of stitch's *semantic* defaults, which are
 choices about what we want rather than speed hacks: an abstraction body may not
@@ -469,6 +478,17 @@ exactly when their `shifted` Idxs are `=`. Hash-consing turns the
 abstraction-variable equality constraint into an integer comparison, and it is
 de Bruijn-correct because both sides are stated relative to the match root.
 
+(One honest note on what mini-stitch does *not* replicate here. Real stitch
+does not extract arguments on demand at all: `get_zippers` precomputes, in one
+bottom-up pass, an `arg_of_zid_node` table holding the shifted argument for
+every (path, node) pair in the corpus, each record built in O(1) by extending
+the child's records, so that search-time matching is a single hash lookup and
+every shifted subtree is computed once and shared by all its parents. Our
+memoized `extract-arg` walk has the same asymptotics in the match-list
+dimension but worse constants in the argument dimension. The zipper table is a
+genuine architectural idea of the Rust — not mere interning — and it is the
+main thing this replication deliberately trades away for legibility.)
+
 Nothing on the *winner's* path crosses a lambda, so all six of its arguments
 have `shift 0` and `captures? #f`:
 
@@ -683,8 +703,9 @@ most general pattern, and the thing it is really searching over is not terms but
 **match sets**: each expansion partitions the current locations
 (`syntactic-expansions` groups them; `ivar-expansions` intersects them), and
 every node of the search tree is a pattern together with the set of subtrees it
-still generalizes. The two dominance prunings are what keep the survivors
-*least* general for their match set:
+still generalizes. The two dominance prunings enforce two *necessary*
+conditions of least-generality — no constant argument column, no duplicated
+argument column:
 
 * **argument capture** (`useless-abstract-prune?` / `constant-argument?`) — if a
   variable receives the same closed argument at every location, the lgg of that
@@ -695,8 +716,21 @@ still generalizes. The two dominance prunings are what keep the survivors
   *non-linear*: it reuses one variable in both positions. The two-variable
   version is discarded.
 
-Modulo the arity cap, what survives to be scored is exactly the anti-unifier of
-its own match set. The upper bound is the part that has no anti-unification
+They do *not* enforce least-generality outright. A pattern with a variable
+where the lgg of its match set has concrete shared structure is pruned by
+neither rule: on `["(f (g (h a)) x)", "(f (g (h b)) x)"]` the candidates
+`(#0 x)`, `(f #0 x)`, and `(f (g #0) x)` all reach scoring alongside the lgg
+`(f (g (h #0)) x)` — their argument columns are neither constant nor
+duplicated. What eliminates them is the **utility**: refining a variable into
+structure shared by every match location gains
+`(Σ num-paths − 1) · cost(structure)`, strictly positive whenever the
+≥ 2-programs rule holds, so the lgg of a match set (generically — ties aside)
+beats every strictly-more-general pattern over that same set. Least-generality
+is thus enforced in two dimensions by pruning and in all the rest by
+arithmetic: the *winner* is an anti-unifier of its match set, but plenty of
+non-lggs get scored on the way there.
+
+The upper bound is the part that has no anti-unification
 analogue at all: it decides **which match sets are worth reaching**, discarding
 whole regions of the lattice before their lggs are ever constructed. That
 inversion — enumerate match sets top-down under a bound, instead of

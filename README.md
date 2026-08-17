@@ -47,8 +47,11 @@ todo.md             the plan
 ```
 
 micro and mini are two implementations of the same specification. micro says
-what the answer *is*; mini computes the same answer fast, and matches real
-stitch step for step. They share only the parser and printer.
+what the answer *is*; mini computes the same answer fast, matching real stitch
+answer for answer — same abstractions, utilities, costs, and rewritten
+programs on the default configuration — though not step for step: the
+worklists differ, which is visible exactly once, as a documented equal-utility
+tie. They share only the parser and printer.
 
 ## Quickstart
 

@@ -41,18 +41,26 @@ variable is used more than once, so only one copy of its argument survives.
 
 ## Scope
 
-Fuzz statistics (micro vs mini, ~10k random corpora): zero disagreements on
-corpora without duplicated-children self-similarity (~3,400 runs); on corpora
-biased toward duplicated children, mini/stitch over-counted in 2,003 of 3,831
-cases — always an over-count, never an under-count, and never a case where the
+Fuzz statistics from the original (scratchpad, non-reproducible) session,
+micro vs mini over ~10k random corpora in several batches: zero disagreements
+on ~3,400 runs without duplicated-children self-similarity; on corpora biased
+toward duplicated children, mini/stitch over-counted in 2,003 of 3,831 cases —
+always an over-count, never an under-count, and never a case where the
 true-optimal abstraction differed from stitch's pick in a way stitch's filters
-would have excluded. The bug requires a multiuse variable whose argument
-contains further matches of the same pattern; none of stitch's own test
-corpora (data/basic, cogsci domains) trigger it.
+would have excluded. (The remaining ~2.6k runs of the ~10k used intermediate
+generator settings that fit neither bucket cleanly; their 2 mismatches were on
+corpora containing duplicated children, consistent with the above.) A
+deterministic, seeded, checked-in version of this fuzzer now lives at
+tests/fuzz.rkt so the directional claim is auditable from the repo. The bug
+requires a multiuse variable whose argument contains further matches of the
+same pattern; none of stitch's own test corpora (data/basic, cogsci domains)
+trigger it.
 
-Note stitch's `--utility-by-rewrite` debug flag (rewriting.rs:144) embodies
-micro's definition but stack-overflows on the reproducer, so it cannot serve
-as an oracle here.
+Note stitch's `--utility-by-rewrite` debug flag embodies micro's definition
+(the flag test at rewriting.rs:144 disables the mismatch assert; the
+by-rewriting utility computation it enables lives in FinishedPattern::new,
+compression.rs:~1185-1196) but stack-overflows on the reproducer, so it cannot
+serve as an oracle here.
 
 ## Decision for mini-stitch
 

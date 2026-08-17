@@ -55,7 +55,7 @@
 ;;     dominance-safe (paper footnote 2): stitch optimizes subject to it, so
 ;;     without it micro could return a *better* abstraction than stitch and the
 ;;     two would disagree.  The redundant-argument one *is* dominance-safe and
-;;     could be dropped; it is kept because it is two lines and it makes micro's
+;;     could be dropped; it is kept because it is a few lines and it makes micro's
 ;;     tie-breaking agree with mini's more often.
 ;;
 ;; WHERE MICRO AND MINI DISAGREE
@@ -642,7 +642,7 @@
 ;; argument at every site?  Then using one variable twice matches the same
 ;; places with a smaller arity and gets paid for the repetition, so it strictly
 ;; dominates (the paper's redundant argument elimination).  Unlike the filter
-;; above this one really is safe to drop; it is kept because it costs two lines
+;; above this one really is safe to drop; it is kept because it costs a few lines
 ;; and keeps micro's choices closer to mini's.
 (define (duplicate-argument? sites arity)
   (for*/or ([i (in-range arity)]
