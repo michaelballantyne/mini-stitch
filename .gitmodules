@@ -1,0 +1,3 @@
+[submodule "stitch"]
+	path = stitch
+	url = https://github.com/mlb2251/stitch.git
