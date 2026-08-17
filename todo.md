@@ -20,16 +20,19 @@ Design settled; implementation in progress.
       parser quirks, sentinel/shift semantics, expands-to from unshifted
       node; corpus costs match real binary on all of data/basic + nuts-bolts.
       Fused-lambda tags unsupported (simple3/4/5 out of scope).
-- [ ] src/pattern.rkt — patterns as trees with holes, match machinery,
-      self-overlap detection (in progress)
-- [ ] src/search.rkt — cost model, utility, upper bound, prunings, arity-zero
-      priming, branch-and-bound loop (in progress)
-- [ ] src/rewrite.rkt — greedy top-down rewrite + mismatch assert
-- [ ] src/compress.rkt — iteration loop, JSON I/O, CLI
+- [x] src/pattern.rkt — patterns as trees with holes, match machinery,
+      self-overlap detection (replaces ziptrie with ordinary unification)
+- [x] src/search.rkt — branch-and-bound. Matches real binary exactly on
+      27/28 basic corpus/arity combos (one verified utility tie) and on
+      nuts-bolts/wheels/dials. Caveat for rewrite stage: num_uses counts
+      ALL match locations; used/unused split untested by iteration-1 diffs.
+- [ ] src/rewrite.rkt — greedy top-down rewrite + mismatch assert (in progress)
+- [ ] src/compress.rkt — iteration loop, JSON I/O, CLI (in progress)
 - [ ] tests/differential.rkt — compare against real binary on data/basic
+      (in progress)
 - [ ] Differential pass on all of stitch/data/basic (arity 2 and 3, iterations 1-3)
 - [ ] Differential pass on nuts-bolts (realistic scale)
-- [ ] src/micro.rkt — unoptimized executable spec (~200-300 lines): naive
+- [ ] src/micro.rkt (in progress) — unoptimized executable spec (~200-300 lines): naive
       worklist enumeration, matching from scratch, utility by actually
       rewriting (bottom-up DP). Keeps only the semantic filters: zero-match
       termination, >=2-programs, free-var ban, capture rejection, argument
