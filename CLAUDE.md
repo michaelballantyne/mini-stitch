@@ -10,3 +10,6 @@ notes/ contains notes and reflections written by Claude or Codex, named with a <
 stitch.pdf is the original stitch paper
 stitch/ is a git submodule with the real stitch implementation
 todo.md contains the current plan
+
+Claude or Codex should dispatch detailed implementation, debugging, and testing work to subagents (opus or sonnet as appropriate) to avoid exhausting the main conversation context over long-running work. The main session should however take responsiblity for high-level direction, design, and review.
+
