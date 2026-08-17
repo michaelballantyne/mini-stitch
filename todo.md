@@ -15,12 +15,15 @@ Design settled; implementation in progress.
 - [x] Settle design with Michael: Racket, implementation parity, simple
       architecture (no zipper tables), basic + nuts-bolts scale, HtDP style
 - [x] Build real stitch binary for differential testing (stitch/target/release)
-- [ ] src/expr.rkt — corpus arena, hash-consing, parse/print, analyses,
-      argument extraction with shift/sentinel (verify parity details vs Rust)
+- [x] src/expr.rkt — corpus arena, hash-consing, parse/print, analyses,
+      argument extraction with shift/sentinel. Parity verified vs Rust:
+      parser quirks, sentinel/shift semantics, expands-to from unshifted
+      node; corpus costs match real binary on all of data/basic + nuts-bolts.
+      Fused-lambda tags unsupported (simple3/4/5 out of scope).
 - [ ] src/pattern.rkt — patterns as trees with holes, match machinery,
-      self-overlap detection
+      self-overlap detection (in progress)
 - [ ] src/search.rkt — cost model, utility, upper bound, prunings, arity-zero
-      priming, branch-and-bound loop
+      priming, branch-and-bound loop (in progress)
 - [ ] src/rewrite.rkt — greedy top-down rewrite + mismatch assert
 - [ ] src/compress.rkt — iteration loop, JSON I/O, CLI
 - [ ] tests/differential.rkt — compare against real binary on data/basic
