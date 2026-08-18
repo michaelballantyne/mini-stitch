@@ -75,6 +75,8 @@ tests/for-set-test.rkt   the main macro benchmark: recover the for/set
                     macro from expanded folds (several minutes, run knowingly)
 tests/my-when-test.rkt   binder-position pattern variables and ellipses in
                     one learned macro
+tests/microkanren-test.rkt   rediscovering miniKanren's Zzz and fresh from
+                    hand-expanded microKanren goals (seconds)
 notes/              design notes, a digest of the paper, a map of the Rust
                     implementation, and the write-up of a bug found in stitch
 stitch/             git submodule: the real stitch implementation
@@ -163,8 +165,12 @@ comprehension from four expanded folds (a template binder, a
 binder-position pattern variable, definition-site references, and an
 H2-shadowed program correctly refused); variadic macros like
 `(m x ...) => (f (g x) ...)` across three arities (abstraction over arity,
-which stitch cannot express); and a combined form binding a use-site name
-over a variadic body. Design notes:
+which stitch cannot express); a combined form binding a use-site name
+over a variadic body; and, from hand-expanded microKanren goals, the first
+two macros of the real miniKanren-wrappers file — `Zzz` (the goal-delaying
+macro) and then single-variable `fresh` — in the order their authors wrote
+them (`tests/microkanren-test.rkt`,
+`notes/2026-08-18-1930-microkanren-experiment.md`). Design notes:
 `notes/2026-08-18-0323-syntax-rules-learning-design.md`,
 `notes/2026-08-18-1324-ellipses-design.md`, and
 `notes/2026-08-18-1541-untranscription-noninjectivity.md` (when
