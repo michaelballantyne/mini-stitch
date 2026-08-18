@@ -99,7 +99,7 @@ my-when/begin corpus) as the two mechanisms' first combined test.
   from a zero-iteration site (macro-micro's documented sound-but-
   incomplete corner) -- so the threshold for consolidating the
   non-injectivity catalogue into the design note (set at "a fourth
-  source") has been met; do it next session.
+  source") has been met -- done: notes/2026-08-18-1541-untranscription-noninjectivity.md.
 - **The ellipsis gate had to sharpen**: any-two-lengths opened on the
   for/set corpus and took its benchmark from ~5.3 to 30+ measured
   minutes for candidates that cannot win there. Now gated on a variadic
