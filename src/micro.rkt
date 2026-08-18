@@ -733,35 +733,53 @@
     (check-true (and (member X kids) #t))
     (check-equal? (length kids) 3)))
 
-;; micro-search : (Listof Term) [Natural] -> (U Pattern #f)
-;; The abstraction body of at most `max-arity` arguments that saves the most, or
-;; #f if none saves anything.  Breadth-first over the candidates, scoring every
-;; finished one by rewriting the corpus with it; ties go to whichever was
-;; reached first.
-;;
-;; The loop is this short because there is nothing to maintain between steps: no
-;; bound on what a candidate might grow into, no priority among the candidates,
-;; no state carried from a pattern to its children.  All the search does is
-;; walk the space `surviving-children` spans, keeping the best finished
-;; candidate it has seen.
-(define (micro-search programs [max-arity 2])
+;; all-candidates : (Listof Term) Natural -> (Listof Pattern)
+;; Every finished candidate the enumeration reaches, in the order it reaches
+;; them: level by level from the single hole, each level the surviving
+;; children of the last.  There is nothing to maintain between levels -- no
+;; bound on what a pattern might grow into, no priority, no state carried from
+;; a pattern to its children.
+(define (all-candidates programs max-arity)
   (define prims (corpus-prims programs))
-  (let level ([frontier (list 'hole)] [best #f] [best-utility 0])
+  (let level ([frontier (list 'hole)] [found '()])
     (cond
-      [(null? frontier) best]
+      [(null? frontier) found]
       [else
        (define children
          (append-map (lambda (p) (surviving-children p prims max-arity programs))
                      frontier))
        (define-values (done open) (partition finished? children))
-       (define-values (best* best-utility*)
-         (for/fold ([best best] [best-utility best-utility])
-                   ([c (in-list done)])
-           (define u (abstraction-utility c programs))
-           (if (> u best-utility)
-               (values c u)
-               (values best best-utility))))
-       (level open best* best-utility*)])))
+       (level open (append found done))])))
+
+;; best-candidate : (Listof Pattern) (Listof Term) -> (U Pattern #f)
+;; The candidate that saves the most, scoring each once by rewriting the
+;; corpus with it -- the first such, when utilities tie -- or #f if none
+;; saves anything at all.
+(define (best-candidate candidates programs)
+  (define scored
+    (for/list ([c (in-list candidates)])
+      (cons c (abstraction-utility c programs))))
+  (define best (and (pair? scored) (argmax cdr scored)))
+  (and best (positive? (cdr best)) (car best)))
+
+(module+ test
+  (test-case "all-candidates and best-candidate"
+    (define A (prim 'a)) (define B (prim 'b))
+    ;; corpus: (a a a) and (b b b)
+    (define programs (list (app (app A A) A) (app (app B B) B)))
+    (define cs (all-candidates programs 2))
+    (check-true (andmap finished? cs))
+    ;; the known winner is among them, and wins
+    (define w (app (app (ivar 0) (ivar 0)) (ivar 0)))
+    (check-true (and (member w cs) #t))
+    (check-equal? (best-candidate cs programs) w)
+    (check-false (best-candidate '() programs))))
+
+;; micro-search : (Listof Term) [Natural] -> (U Pattern #f)
+;; The abstraction body of at most `max-arity` arguments that saves the most,
+;; or #f if none saves anything: enumerate every candidate, then take the best.
+(define (micro-search programs [max-arity 2])
+  (best-candidate (all-candidates programs max-arity) programs))
 
 ;; ---------------------------------------------------------------------------
 ;; Iteration
@@ -777,28 +795,46 @@
 (struct learned (body arity utility compressive final-cost programs)
   #:transparent)
 
+;; learn-one : (Listof Term) Natural Symbol -> (U Learned #f)
+;; One whole iteration: find the best abstraction, rewrite the corpus with it
+;; under `name`, and record what happened -- or #f if nothing saves anything.
+(define (learn-one programs max-arity name)
+  (define body (micro-search programs max-arity))
+  (cond
+    [(not body) #f]
+    [else
+     (define-values (rewritten predicted) (rewrite-corpus body programs name))
+     (define before (corpus-cost programs))
+     (define after (corpus-cost rewritten))
+     (unless (= predicted after)
+       (error 'learn-one "the DP promised cost ~a; rewriting gave ~a"
+              predicted after))
+     (learned body (pattern-arity body)
+              (- before after (term-cost body)) (- before after)
+              after rewritten)]))
+
+(module+ test
+  (test-case "learn-one records one iteration"
+    (define A (prim 'a)) (define B (prim 'b))
+    (define l (learn-one (list (app (app A A) A) (app (app B B) B)) 2 'fn_0))
+    (check-equal? (learned-arity l) 1)
+    (check-equal? (learned-utility l) 200)      ; 604 -> 402, body costs 2
+    (check-equal? (learned-final-cost l) 402)
+    ;; each program is now one call: (fn_0 a) and (fn_0 b)
+    (check-equal? (learned-programs l)
+                  (list (app (prim 'fn_0) A) (app (prim 'fn_0) B)))
+    ;; and a corpus with nothing shared learns nothing
+    (check-false (learn-one (list A B) 2 'fn_0))))
+
 ;; micro-compress : (Listof Term) [Natural] [Natural] -> (Listof Learned)
-;; Learn a library, one abstraction at a time: search, rewrite the corpus with
-;; the winner under the name fn_k, and search the result again.  Stops early
-;; when nothing is worth abstracting any more.
+;; Learn a library, one abstraction at a time: learn fn_0, rewrite, learn fn_1
+;; from the rewritten corpus, and so on.  Stops early when nothing more is
+;; worth abstracting.
 (define (micro-compress programs [max-arity 2] [iterations 1])
   (let loop ([programs programs] [k 0] [out '()])
-    (cond
-      [(= k iterations) (reverse out)]
-      [else
-       (define body (micro-search programs max-arity))
-       (cond
-         [(not body) (reverse out)]
-         [else
-          (define name (string->symbol (format "fn_~a" k)))
-          (define-values (rewritten predicted) (rewrite-corpus body programs name))
-          (define before (corpus-cost programs))
-          (define after (corpus-cost rewritten))
-          (loop rewritten (add1 k)
-                (cons (learned body
-                               (pattern-arity body)
-                               (- before after (term-cost body))
-                               (- before after)
-                               after
-                               rewritten)
-                      out))])])))
+    (define l (and (< k iterations)
+                   (learn-one programs max-arity
+                              (string->symbol (format "fn_~a" k)))))
+    (if l
+        (loop (learned-programs l) (add1 k) (cons l out))
+        (reverse out))))
