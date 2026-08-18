@@ -210,3 +210,30 @@ identity template. Decide with measurements, not a priori.
 Not this rung: nested ellipses (depth 2), structured pattern elements,
 non-trailing ellipses, ellipses over binder lists (needs multi-arg lambda
 in the object language first), recursive macros.
+
+## Amendment (2026-08-18, same session, before stage 2)
+
+Section 2's "the depth-1 pvar is forced to be the LAST pattern variable"
+turns out to buy complexity rather than spend it: keeping the sequence
+variable inside the numbered-pvar namespace means the enumerator must
+either mint it last (fragile against later depth-0 mints) or renumber at
+finish. Amended for stage 2: **at most one ellipsis per TEMPLATE, and the
+sequence variable is its own node kind** -- (ellip sub) as a plain form's
+last element, (svar) inside it. Consequences, all simplifying:
+
+- pvar numbering is untouched; the pattern renders as
+  (_ %x0 .. %xk-1 %xs ...) exactly when the template has an ellip.
+- Sequence arguments become ordinary trailing (path . subterm) entries in
+  skeleton-match's result, so the call construction, the rewriter's
+  recursion, the DP's accept-cost, and the oracle are all UNCHANGED --
+  the entire variadic extension lives in the matcher, the renderer, and
+  the enumerator.
+- "Exactly one depth-1 variable per ellipsis" is true by construction
+  (one node kind, one template-wide ellip); multiple svar occurrences
+  inside the sub remain legal (H4 pointwise, the oracle's business).
+
+One-per-form to one-per-template is barely a restriction at this rung:
+every motivating shape (begin/when/list/application tails, the (f (g x)
+...) benchmark) has a single ellipsis. Lifting it later means either
+returning to numbered depth-1 pvars with canonical renumbering, or
+naming svars per ellip -- a decision for the rung that needs it.
