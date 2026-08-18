@@ -37,7 +37,7 @@
  (struct-out prim) (struct-out var) (struct-out ivar)
  (struct-out app) (struct-out lam)
  ;; cost model constants
- COST-APP COST-LAM COST-VAR COST-IVAR COST-PRIM COST-NEW-PRIM)
+ COST-APP COST-LAM COST-VAR COST-PRIM COST-NEW-PRIM)
 
 ;; ---------------------------------------------------------------------------
 ;; Nodes
@@ -61,8 +61,17 @@
 (define COST-APP 1)
 (define COST-LAM 1)
 (define COST-VAR 100)
-(define COST-IVAR 100)
 (define COST-PRIM 100)
+
+;; There is deliberately no COST-IVAR.  An abstraction variable has two prices
+;; depending on where it is priced, and neither is a constant worth naming:
+;; in the body of an abstraction being learned it costs 0 -- variables are
+;; parameters, not structure (the paper's cost_{alpha=0}, and the price both
+;; implementations charge for an abstraction's own size) -- and nothing in
+;; either pipeline ever prices one anywhere else.  (Real stitch's config does
+;; carry a cost_ivar = 100 default, but its accounting likewise never routes
+;; an abstraction body through the generic cost function; the constant is
+;; inert there too.)
 
 ;; The name of a freshly invented abstraction is a primitive like any other, so
 ;; it costs the same (`compute_cost_new_prim`, lambdas expr.rs:555-558).

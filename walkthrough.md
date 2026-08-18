@@ -52,9 +52,10 @@ primitives, i.e. opaque leaves with names.
 ### The cost model
 
 From `src/ast.rkt` (stitch's dreamcoder defaults): `COST-APP = COST-LAM = 1`,
-`COST-VAR = COST-IVAR = COST-PRIM = 100`, and a freshly invented abstraction
+`COST-VAR = COST-PRIM = 100`, and a freshly invented abstraction
 name is a primitive like any other, `COST-NEW-PRIM = 100`. Structure is nearly
-free; leaves are expensive. `term-cost` computes it.
+free; leaves are expensive. `term-cost` computes it. (There is deliberately no
+constant for abstraction variables — see the note in `src/ast.rkt`.)
 
 | program | cost |
 |---|---|

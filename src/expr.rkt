@@ -496,7 +496,13 @@
                (define n (corpus-node c idx))
                (cond
                  [(var? n) COST-VAR]
-                 [(ivar? n) COST-IVAR]
+                 ;; Ivars in this arena are capture sentinels inside shifted
+                 ;; argument copies, and nothing ever prices those: the
+                 ;; multiuse bonus prices the unshifted argument, and body
+                 ;; sizes are accumulated incrementally (with abstraction
+                 ;; variables at 0) rather than through this function.
+                 ;; Raising keeps the function total and the claim checked.
+                 [(ivar? n) (error 'cost "asked to price an abstraction variable (Idx ~a); nothing in the pipeline should ever do this" idx)]
                  [(prim? n) COST-PRIM]
                  [(app? n) (+ COST-APP
                               (cost c (app-fun n))
