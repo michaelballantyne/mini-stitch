@@ -109,3 +109,27 @@ lambda-calculus side) are unchanged.
 - Ellipses (the big rung), function-shaped classification (cheap, high
   story-value), define/letrec + the layering benchmark, the Racket
   expander as outer oracle -- per the directions note.
+
+## [Corrected 2026-08-18, second session]
+
+The junk-template arithmetic above ("(lambda (#0) #1) ... saving 2 per
+site") was wrong; the adversarial review caught it. Redone by hand from the
+cost model: as a template, `(lambda (,(pvar 0)) ,(pvar 1))` costs 102 (1
+form for the lambda + 100 for the literal `lambda` atom + 1 form for the
+one-element binder list; both pvars are free). At a site `(lambda (x)
+body)` the ORIGINAL costs 202 + cost(body) (1 form + 100 `lambda` + 101 for
+the one-element binder list holding the real symbol `x` + cost(body)); the
+REWRITTEN call `(m x body)` costs 201 + cost(body) (1 call form + 100 for
+the name + 100 for the site's now-literal binder-name argument + cost(body)
+again for the second argument). That is a saving of 1 per site, not 2.
+Utility is therefore `1*n - 102`: it takes 103 sites to turn utility
+positive (n=102 is exactly break-even, utility 0), and the measured utility
+on this session's 3-site style of corpus is `3 - 102 = -99` -- solidly
+negative, nowhere near a live threat. The degenerate subclass this template
+represents (a binder-position pvar unreferenced anywhere -- not just in the
+template, but in every site's arguments too) is in any case dominated by
+its tvar variant: a tvar binder matches every site the pvar version does
+plus more (it never needs a site's argument to supply anything usable), and
+saves 100 more per site besides. No filter was added for it; none earns its
+keep here. See macro-micro.rkt's `reject?` comment (findings F9/F10) for
+the general argument, and its own arithmetic redone in full there.

@@ -133,11 +133,26 @@
   (match t [`(let ([,_ ,_]) ,_) #t] [_ #f]))
 
 ;; expr-children : Sexpr -> (Listof (cons Path Sexpr))
-;; The immediate subexpressions of an expression, each with its path.  This is
-;; the one place the binding spec lives: lambda and let contribute only their
-;; expression parts, any other form contributes every element (its head too --
-;; a head is an expression, and `(if ...)`'s head is where templates learn to
-;; say `if`).  Everything that walks programs walks through here.
+;; The immediate subexpressions of an expression, each with its path.  For
+;; lambda and let this IS the binding spec: only the expression parts are
+;; contributed, never the binder position.  Any other form contributes every
+;; element (its head too -- a head is an expression, and `(if ...)`'s head is
+;; where templates learn to say `if`) -- INCLUDING a learned macro's call
+;; `(m1 e1 ... ek)`.  That is honest about lambda and let, but not the whole
+;; story once a library is in play: a learned macro's own binder-position
+;; arguments (which of #0..#(k-1) are binders is recorded in its mdef, per
+;; V2) are NOT in the spec this function reads, so they are walked here as
+;; plain expressions.  A corpus program like `(m0 x (g x))`, where m0's #0 is
+;; a binder, has its `x` at position (1) mis-read as an expression position,
+;; and its spelling enters corpus-facts' identifier list like any other free
+;; reference.  This is harmless today for two reasons that have nothing to do
+;; with this function being right: the oracle (site-valid?) refuses any
+;; rewrite whose skeleton match got a binder wrong, and a bare-symbol
+;; template can never out-cost the site it would replace.  Design note
+;; section 7 flags the proper fix: an mdef binder mask, something that lets
+;; this function (and corpus-facts) walk a learned macro's call correctly
+;; instead of leaning on the oracle to catch a wrong walk after the fact.
+;; Everything that walks programs walks through here.
 (define (expr-children t)
   (cond [(lambda-form? t) (list (cons '(2) (caddr t)))]
         [(let-form? t) (list (cons '(1 0 1) (cadr (caadr t)))
@@ -183,7 +198,7 @@
 (module+ test
   (test-case "shapes, positions, costs"
     (define P '(lambda (x) (f x 1)))
-    (check-equal? (sexpr-cost P) 503)             ; 2 forms, 5 atoms... wait:
+    (check-equal? (sexpr-cost P) 503)
     ;; (lambda (x) (f x 1)) is 3 forms (the lambda, the binder list, the
     ;; call) and 5 atoms (lambda x f x 1): 3 + 500 = 503
     (check-equal? (subterm-at P '(2 0)) 'f)
@@ -333,25 +348,43 @@
 ;;     (a bare symbol, not a subterm) as the argument;
 ;;   * a tvar in expression position matches any identifier;
 ;;   * later occurrences of a pattern variable -- in either kind of position
-;;     -- match anything at all;
-;; every one of those judgments is deferred to the expansion oracle.  Only
-;; shape is settled here -- in particular a binding form only matches a
-;; template written with that binding form, and holes stand at expression
-;; positions and nothing else.
+;;     -- match anything at all, WITH ONE EXCEPTION that is shape, not
+;;     hygiene: a later occurrence in BINDER position requires the argument
+;;     recorded at the first occurrence to be a symbol (a compound argument
+;;     can never legally stand as a binder's name, whichever position it was
+;;     first read from);
+;; every one of those judgments -- except that one -- is deferred to the
+;; expansion oracle.  Only shape is settled here -- in particular a binding
+;; form only matches a template written with that binding form, holes stand
+;; at expression positions and nothing else, and a binder position holding
+;; anything but a tvar or a pvar (an ill-formed corpus's doing, never the
+;; enumerator's) is simply no match.
 (define (skeleton-match tpl t)
   (define arity (template-arity tpl))
-  ;; match-binder : (U tvar pvar) Symbol Path (HashOf Natural (cons Path Any))
-  ;;               -> (HashOf Natural (cons Path Any))
+  ;; match-binder : Any Symbol Path (HashOf Natural (cons Path Any))
+  ;;               -> (U (HashOf Natural (cons Path Any)) #f)
   ;; The binder position's own judgment, parallel to the pvar/tvar cases of
   ;; `walk` below but never reached by it (walk only recurses into a binding
-  ;; form's expression parts). A tvar binder matches whatever name the site
-  ;; binds there and records nothing (H3). A pvar binder is the site's binder
-  ;; NAME, by the identical first-occurrence rule as an expression-position
-  ;; pvar: recorded if this is the first sighting of that index, ignored
-  ;; (matches anything) on a later one.
+  ;; form's expression parts). Total, unlike the enumerator's own binders
+  ;; (which are always tvar or pvar): the CORPUS's binder position can hold
+  ;; anything a well-formed program puts there, so this is where an ill-formed
+  ;; corpus would otherwise crash on `pvar-i` deep inside a match. A tvar
+  ;; binder matches whatever name the site binds there and records nothing
+  ;; (H3). A pvar binder is the site's binder NAME, by the identical
+  ;; first-occurrence rule as an expression-position pvar: recorded if this is
+  ;; the first sighting of that index; on a later sighting, matches only if
+  ;; what was recorded the first time was itself a symbol -- a pvar that is
+  ;; sometimes an expression-position argument and sometimes a binder can
+  ;; never be legally reused as a binder once its first occurrence bound it to
+  ;; a compound argument (a binder position is a SHAPE judgment, not merely a
+  ;; hygiene one, and it is the skeleton's job to enforce per its own
+  ;; docstring). Anything that is neither tvar nor pvar in binder position is
+  ;; no match at all -- #f -- rather than a crash.
   (define (match-binder binder-p binder-sym binder-path binds)
     (cond [(tvar? binder-p) binds]
-          [(hash-has-key? binds (pvar-i binder-p)) binds]
+          [(not (pvar? binder-p)) #f]
+          [(hash-has-key? binds (pvar-i binder-p))
+           (and (symbol? (cdr (hash-ref binds (pvar-i binder-p)))) binds)]
           [else (hash-set binds (pvar-i binder-p) (cons binder-path binder-sym))]))
   (define (walk p t path binds)
     (cond
@@ -363,17 +396,19 @@
       [(tvar? p) (and (symbol? t) binds)]
       [(lambda-form? p)
        (and (lambda-form? t)
-            (walk (caddr p) (caddr t) (append path '(2))
-                  (match-binder (car (cadr p)) (car (cadr t))
-                                (append path '(1 0)) binds)))]
-      [(let-form? p)
-       (and (let-form? t)
-            (let* ([binds (match-binder (car (caadr p)) (car (caadr t))
-                                        (append path '(1 0 0)) binds)]
-                   [binds (walk (cadr (caadr p)) (cadr (caadr t))
-                               (append path '(1 0 1)) binds)])
+            (let ([binds (match-binder (car (cadr p)) (car (cadr t))
+                                       (append path '(1 0)) binds)])
               (and binds
                    (walk (caddr p) (caddr t) (append path '(2)) binds))))]
+      [(let-form? p)
+       (and (let-form? t)
+            (let ([binds (match-binder (car (caadr p)) (car (caadr t))
+                                       (append path '(1 0 0)) binds)])
+              (and binds
+                   (let ([binds (walk (cadr (caadr p)) (cadr (caadr t))
+                                      (append path '(1 0 1)) binds)])
+                     (and binds
+                          (walk (caddr p) (caddr t) (append path '(2)) binds))))))]
       [(list? p)
        (and (list? t) (not (lambda-form? t)) (not (let-form? t))
             (= (length p) (length t))
@@ -414,7 +449,22 @@
     ;; occurrences (H4 again is the oracle's business): the body's reference
     ;; to #0 need not even be spelled the same as the binder it names
     (check-equal? (skeleton-match T2 '(lambda (x) (f y (g x))))
-                  (list (cons '(1 0) 'x) (cons '(2 2) '(g x))))))
+                  (list (cons '(1 0) 'x) (cons '(2 2) '(g x))))
+    ;; F1: a hand-built template with a raw symbol in binder position is not
+    ;; something the enumerator ever produces (it only ever puts a tvar or a
+    ;; pvar there), but match-binder must still be total rather than crash
+    ;; deep inside pvar-i's struct-field contract -- it is simply no match
+    ;; ('bogus is neither tvar nor pvar)
+    (check-false (skeleton-match '(lambda (bogus) 1) '(lambda (x) 1)))
+    ;; F3: a pvar recorded once as a COMPOUND expression-position argument
+    ;; can never afterward be reused as a binder -- the second occurrence's
+    ;; shape judgment fails cleanly instead of transcription later splicing
+    ;; a compound term into a binder list
+    (define T3 `(f ,(pvar 0) (lambda (,(pvar 0)) 1)))
+    (check-false (skeleton-match T3 '(f (g 1) (lambda (x) 1))))
+    ;; ... while a symbol recorded first is fine to reuse as a binder
+    (check-equal? (skeleton-match T3 '(f w (lambda (x) 1)))
+                  (list (cons '(1) 'w)))))
 
 ;; ---------------------------------------------------------------------------
 ;; The oracle: does this rewrite expand back?
@@ -478,11 +528,22 @@
 ;; at `path`, expand the whole program with the candidate macro added to the
 ;; library, and ask whether it still means what it meant.  A rewrite that
 ;; makes expansion crash (however it manages to) certainly changed the
-;; meaning, so errors count as no.
+;; meaning, so errors count as no -- but only USER-LEVEL expansion errors:
+;; expander.rkt's own `error` calls for "no pattern matched", "name already
+;; bound", and transcribe's depth mismatches are the expander correctly
+;; reporting that this splice does not make sense at this site, which is
+;; exactly a no. Those are plain exn:fail?, never exn:fail:contract?. A
+;; contract violation escaping from this call graph (for instance, the one
+;; F1/F3 fixed: skeleton-match recording a compound argument where
+;; transcription then expects a binder-list symbol) is a BUG in this module
+;; or in expander.rkt, not a hygiene verdict, and must not be silently read
+;; as "no match" -- so it is excluded from the handler and left to propagate,
+;; where it belongs, as the crash it is.
 (define (site-valid? library name tpl prog expanded path args)
   (define call (cons name (map cdr args)))
   (define library+ (append library (list (mdef name (template-arity tpl) tpl))))
-  (with-handlers ([exn:fail? (lambda (_) #f)])
+  (with-handlers ([(lambda (e) (and (exn:fail? e) (not (exn:fail:contract? e))))
+                   (lambda (_) #f)])
     (alpha=? (expand-under library+ (replace-at prog path call))
              expanded)))
 
@@ -495,12 +556,19 @@
 ;;
 ;; One refusal is a POLICY, not a hygiene fact: an argument may not be the
 ;; bare name of a library macro.  The oracle would accept it -- passing a
-;; macro's name for a pattern variable the template drops into head position
-;; is perfectly hygienic -- but a macro parameterized over which macro to
-;; call is a higher-order macro, which this module's standing simplifications
-;; exclude.  (This is the only channel: a macro name buried anywhere else in
-;; an argument makes the expansion fail, and the oracle already refuses
-;; that.)
+;; macro's name for a pattern variable the template drops into HEAD position
+;; of the spliced call is perfectly hygienic -- but a macro parameterized
+;; over which macro to call is a higher-order macro, which this module's
+;; standing simplifications exclude.  (This is not the only channel a macro
+;; name can reach an argument through -- an argument that IS a macro call,
+;; e.g. `(m0 1)`, expands just fine and is exercised on purpose by the
+;; iteration test below; only a BARE, unapplied macro name is refused here.)
+;; The check is also deliberately coarser than its own rationale needs: it
+;; refuses a macro name supplied as a BINDER position's argument (V2) just
+;; the same, where the higher-order-macro worry does not even apply -- a
+;; binder-position argument only names a fresh local, it never gets called
+;; -- but refusing there costs nothing this module's corpora would ever want
+;; back; it only refuses more than strictly necessary, never less.
 (define (valid-sites library name tpl prog expanded)
   (define macro-names (map mdef-name library))
   (for/fold ([sites (hash)])
@@ -565,17 +633,37 @@
 ;; site can only remove enclosing binders that no surviving argument
 ;; references, so composed rewrites stay valid -- and `rewrite-corpus`'s
 ;; final assertion re-runs the oracle on the whole result rather than
-;; trusting that argument.
+;; trusting that argument. Like micro.rkt's own rewrite-corpus, best-cost
+;; below is memoized, and for the same reason: the memo table IS the dynamic
+;; program, not an optimization on top of it (see the comment there).
 
 ;; rewrite-program : (HashOf Path ...) Symbol Sexpr -> (values Sexpr Cost)
 ;; One program rewritten as cheaply as the sites allow, and what the dynamic
 ;; program says it now costs.
 (define (rewrite-program sites name prog)
+  ;; This table is not an optimization bolted onto the dynamic program -- it
+  ;; IS the dynamic program, exactly as in micro.rkt's rewrite-corpus: the DP
+  ;; is stated bottom-up, one verdict per subtree, and memoizing this
+  ;; top-down recursion computes the same table. Without it, `best-cost`
+  ;; visits every descendant TWICE at each node (once from accept-cost, once
+  ;; from reject-cost), so a program nested through the same shape at every
+  ;; level revisits identical subtrees an exponential number of times --
+  ;; measured 4x per two nesting levels on self-similar programs before this
+  ;; fix. Keyed on PATH, not on the subterm: within one call to
+  ;; rewrite-program, a path names exactly one occurrence, and (unlike
+  ;; micro.rkt's plain terms) two occurrences of an identical-looking subterm
+  ;; at different paths can have different verdicts here -- `sites` itself is
+  ;; keyed by path, because the oracle's hygiene judgment is positional (the
+  ;; H2 shadowing test above is exactly two such occurrences) -- so the
+  ;; subterm alone is not a safe memo key.
+  (define memo (make-hash))
   ;; best-cost : Sexpr Path -> Cost
   (define (best-cost t path)
-    (define a (accept-cost t path))
-    (define r (reject-cost t path))
-    (if (and a (< a r)) a r))
+    (hash-ref! memo path
+               (lambda ()
+                 (define a (accept-cost t path))
+                 (define r (reject-cost t path))
+                 (if (and a (< a r)) a r))))
   ;; reject-cost: keep this node; its non-expression parts keep their cost
   (define (reject-cost t path)
     (+ (sexpr-cost t)
@@ -602,17 +690,28 @@
   (values (rewrite prog '()) (best-cost prog '())))
 
 ;; rewrite-corpus : (Listof MDef) Symbol Template (Listof Sexpr)
+;;                  [(U #f (Listof (cons Sexpr (HashOf Path ...))))]
 ;;                  -> (values (Listof Sexpr) Cost)
 ;; Rewrite every program with the macro, and also return the cost the dynamic
 ;; program predicts.  Then check everything this module promises, the slow
 ;; way: the predicted cost is the real cost, and every rewritten program
 ;; still expands to what its original expands to.
-(define (rewrite-corpus library name tpl programs)
+;;
+;; F15: the optional final argument, when supplied, is one (expanded . sites)
+;; pair per program -- exactly what `best-candidate` already has to compute,
+;; for every candidate, to apply its >=2-valid-programs filter.  Passing it
+;; through here (and on into `macro-utility`) avoids recomputing expand-under
+;; and valid-sites a second time per candidate on the scoring path, which was
+;; an exact 2x on the whole search. #f (the default) recomputes them exactly
+;; as before, so every other caller -- including the tests below -- is
+;; unaffected and every public arity stays backward compatible.
+(define (rewrite-corpus library name tpl programs [precomputed #f])
   (define library+ (append library (list (mdef name (template-arity tpl) tpl))))
   (define results
-    (for/list ([prog (in-list programs)])
-      (define expanded (expand-under library prog))
-      (define sites (valid-sites library name tpl prog expanded))
+    (for/list ([prog (in-list programs)]
+               [pc (in-list (or precomputed (make-list (length programs) #f)))])
+      (define expanded (if pc (car pc) (expand-under library prog)))
+      (define sites (if pc (cdr pc) (valid-sites library name tpl prog expanded)))
       (define-values (rewritten predicted) (rewrite-program sites name prog))
       (unless (= (sexpr-cost rewritten) predicted)
         (error 'rewrite-corpus "the DP promised cost ~a; rewriting gave ~a"
@@ -623,12 +722,15 @@
       (cons rewritten predicted)))
   (values (map car results) (for/sum ([r (in-list results)]) (cdr r))))
 
-;; macro-utility : (Listof MDef) Template (Listof Sexpr) -> Cost
+;; macro-utility : (Listof MDef) Template (Listof Sexpr)
+;;                 [(U #f (Listof (cons Sexpr (HashOf Path ...))))] -> Cost
 ;; How much better off the corpus is for having this macro: the cost it
-;; saves, less the cost of carrying the macro itself.
-(define (macro-utility library tpl programs)
+;; saves, less the cost of carrying the macro itself.  The optional final
+;; argument passes through to `rewrite-corpus`, same contract, same default.
+(define (macro-utility library tpl programs [precomputed #f])
   (define-values (rewritten after)
-    (rewrite-corpus library (fresh-name library programs) tpl programs))
+    (rewrite-corpus library (fresh-name library programs) tpl programs
+                     precomputed))
   (- (corpus-cost programs) after (macro-cost tpl)))
 
 ;; fresh-name : (Listof MDef) (Listof Sexpr) -> Symbol
@@ -760,6 +862,34 @@
 ;; pattern variable is the identity macro; a template whose SHAPE already
 ;; fails to appear in two programs can never come back (children only
 ;; constrain, and the oracle only refuses more).
+;;
+;; F10: micro.rkt has two filters this function does NOT -- a CONSTANT-
+;; argument filter (a parameter that receives the same closed argument at
+;; every call site is not earning its keep as a parameter) and a DUPLICATE-
+;; argument filter (two parameters that always receive alpha-equivalent
+;; arguments are one parameter wearing two names).  Design note section 7
+;; called these "unchanged in spirit"; the truth is narrower.  Neither is
+;; implemented here, and neither is missed: under this module's cost model a
+;; pvar is free wherever it stands and costs cost(arg) per call, so merging
+;; or inlining such a pvar can only shrink or hold the template's cost while
+;; leaving sites at least as valid -- the merged/inlined template strictly
+;; DOMINATES whenever there are >= 2 call sites, and it IS enumerated (no
+;; special case excludes it).  The filter would be an optimization, not a
+;; correctness fix; it is simply unnecessary under this cost model, not
+;; deliberately left out of caution.
+;;
+;; F9: a filter that WOULD be wrong, and so is also not here: rejecting an
+;; "unreferenced binder pvar" -- a binder-position pvar whose index never
+;; recurs anywhere else in the template.  The for/set north-star's own
+;; target (tests/for-set-test.rkt) is exactly that shape: its binder pvar
+;; #0 (the iteration variable) never recurs in the TEMPLATE; its only
+;; reference lives in the argument supplied for #1 at each call site.  Such
+;; a filter would delete this benchmark's answer.  The genuinely degenerate
+;; subclass -- unreferenced in the template AND in every site's argument
+;; too -- needs no filter either: it is dominated by its tvar variant, which
+;; always matches a superset of sites (a tvar binder never needs a site's
+;; argument to name anything usable) and saves 100 more per extra site
+;; besides, so search never prefers it.
 (define (reject? tpl programs)
   (or (pvar? tpl)
       (< (set-count (skeleton-programs tpl programs)) 2)))
@@ -791,24 +921,35 @@
 ;;                  -> (U Template #f)
 ;; The candidate that saves the most -- the first such, when utilities tie --
 ;; or #f if none saves anything.  Scoring a candidate consults the oracle at
-;; every site, so this is where a finished template's hygiene is settled; a
-;; template the oracle refuses everywhere scores as a plain loss and drops
-;; out with the rest.  One judgment is not utility's to make: a macro whose
-;; valid sites are confined to one program is not an abstraction we want,
-;; whatever it saves (micro.rkt's two-programs rule, applied to the sites
-;; that survived the oracle rather than to the skeleton's guesses).
+;; every site, so this is where a finished template's hygiene is settled.
+;; One judgment is not utility's to make: a macro whose valid sites are
+;; confined to one program is not an abstraction we want, whatever it would
+;; save -- so such a template is EXCLUDED by the >=2-programs filter before
+;; it is ever scored, not scored as a plain loss and left to drop out with
+;; the rest (micro.rkt's two-programs rule, applied to the sites that
+;; survived the oracle rather than to the skeleton's guesses).
+;;
+;; F15: computing that filter needs valid-sites (hence expand-under) for
+;; every (candidate, program) pair -- the dominant cost of a search -- and
+;; scoring a surviving candidate via macro-utility -> rewrite-corpus used to
+;; recompute the very same expand-under and valid-sites from scratch, an
+;; exact 2x on the whole search. Compute each candidate's per-program
+;; (expanded . sites) list exactly ONCE, filter on it, and hand the same list
+;; into macro-utility for the candidates that survive.
 (define (best-candidate library candidates programs)
   (define name (fresh-name library programs))
   (define scored
-    (for/list ([tpl (in-list candidates)]
-               #:when (>= (set-count
-                           (for/set ([p (in-list programs)] [k (in-naturals)]
-                                     #:unless (hash-empty?
-                                               (valid-sites library name tpl p
-                                                            (expand-under library p))))
-                             k))
-                          2))
-      (cons tpl (macro-utility library tpl programs))))
+    (for*/list ([tpl (in-list candidates)]
+                [per-program
+                 (in-value
+                  (for/list ([p (in-list programs)])
+                    (define expanded (expand-under library p))
+                    (cons expanded (valid-sites library name tpl p expanded))))]
+                #:when (>= (for/sum ([pc (in-list per-program)]
+                                     #:unless (hash-empty? (cdr pc)))
+                             1)
+                           2))
+      (cons tpl (macro-utility library tpl programs per-program))))
   (define best (and (pair? scored) (argmax cdr scored)))
   (and best (positive? (cdr best)) (car best)))
 
@@ -821,14 +962,71 @@
                   programs))
 
 ;; check-corpus : (Listof Sexpr) -> Void
-;; The one spelling this module reserves for itself.
+;; A well-formedness pass over the corpus, run once before search begins.
+;; This is no longer just the one spelling this module reserves for itself
+;; (F1): a corpus this module's own position-walkers (expr-children,
+;; lambda-form?, let-form?, ...) would misread is worse than merely wrong --
+;; it can drive the enumerator's own well-formed candidates into a shape
+;; mismatch deep in the expander, mid-search, with a confusing error far from
+;; the actual problem (a `(lambda (x) 1 2)` in the corpus, lambda-headed but
+;; not lambda-shaped, is walked as a plain 4-element application by
+;; expr-children, `lambda` lands in the identifier productions via
+;; corpus-facts, and some later candidate's `lambda` reference gets spliced
+;; where the real expander does not expect one). So three things are checked,
+;; each naming its offending subterm the way the %-check below always has:
+;;   * a form whose HEAD is the symbol `lambda` or `let` must actually be
+;;     lambda-form?/let-form? shaped (arity 2, one binder, matching structure)
+;;     -- not merely lambda/let-headed;
+;;   * a well-shaped lambda's or let's binder position holds a symbol;
+;;   * no symbol anywhere is spelled with the expander's own output-namespace
+;;     suffix #rx"\\.[0-9]+$" (e.g. `x.1`) -- that is the suffix `expand`
+;;     appends to freshen a binder's name during expansion, and alpha=?'s
+;;     free-symbol comparison assumes a corpus symbol never collides with one
+;;     manufactured that way; a corpus containing `x.1` could accidentally
+;;     alpha=?-match a binder identity that was never actually the same
+;;     variable.
 (define (check-corpus programs)
+  (define (check-well-formed t)
+    (cond
+      [(and (pair? t) (eq? (car t) 'lambda))
+       (unless (lambda-form? t)
+         (error 'macro-search "lambda-headed but not lambda-shaped: ~a" t))
+       (unless (symbol? (car (cadr t)))
+         (error 'macro-search "lambda binder position is not a symbol: ~a" t))
+       (check-well-formed (caddr t))]
+      [(and (pair? t) (eq? (car t) 'let))
+       (unless (let-form? t)
+         (error 'macro-search "let-headed but not let-shaped: ~a" t))
+       (unless (symbol? (car (caadr t)))
+         (error 'macro-search "let binder position is not a symbol: ~a" t))
+       (check-well-formed (cadr (caadr t)))
+       (check-well-formed (caddr t))]
+      [(list? t) (for-each check-well-formed t)]
+      [else (void)]))
+  (for-each check-well-formed programs)
   (for* ([p (in-list programs)] [s (in-list (flatten p))]
-         #:when (and (symbol? s)
-                     (regexp-match? #rx"^%" (symbol->string s))))
-    (error 'macro-search "corpus uses a reserved %-name: ~a" s)))
+         #:when (symbol? s))
+    (define name (symbol->string s))
+    (cond
+      [(regexp-match? #rx"^%" name)
+       (error 'macro-search "corpus uses a reserved %-name: ~a" s)]
+      [(regexp-match? #rx"\\.[0-9]+$" name)
+       (error 'macro-search
+              "corpus uses the expander's reserved output spelling: ~a" s)])))
 
 (module+ test
+  (test-case "check-corpus rejects ill-formed corpora (F1)"
+    ;; lambda-headed but not lambda-shaped: three body forms, not one
+    (check-exn exn:fail? (lambda () (check-corpus '((lambda (x) 1 2)))))
+    ;; lambda-headed but not lambda-shaped the other way: no binder list and
+    ;; no body at all -- (lambda) is a 1-element form headed by the symbol
+    ;; `lambda`, buried here as ((lambda) 1)'s own head
+    (check-exn exn:fail? (lambda () (check-corpus '(((lambda) 1)))))
+    ;; a symbol spelled like the expander's own freshened output namespace
+    (check-exn exn:fail? (lambda () (check-corpus '((f x.1 1)))))
+    ;; well-formed corpora still pass
+    (check-not-exn (lambda () (check-corpus '((lambda (x) (f x 1)) (if a b c))))))
+
   (test-case "the search finds the lambda-wrapping macro"
     (define programs '((lambda (x) (f x 1))
                        (lambda (y) (f y 2))
