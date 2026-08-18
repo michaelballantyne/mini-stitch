@@ -77,3 +77,35 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
       real (unexpected ties and pre-tie mismatches now FAIL), wheels/dials
       added to the suite, deterministic fuzzer checked in (tests/fuzz.rkt),
       stale notes corrected
+
+## New direction (2026-08-18): learning hygienic syntax-rules macros
+
+Design: notes/2026-08-18-0323-syntax-rules-learning-design.md (plus its
+addendum connecting to the "Hygienic macro expansion explained" pearl).
+The stitch objective, asked about syntactic abstractions: which single
+syntax-rules macro compresses an s-expression corpus most, where using it
+means replacing a subexpression by a call that hygienically expands back.
+
+- [x] src/expander.rkt — the pearl's appendix model expander (marks + scope
+      graphs + syntax-rules), verbatim except three additions it needs to
+      serve as the semantic oracle: lambda, applications, unbound
+      identifiers as globals (+ boolean literals). Its own Fig. 12 test kept.
+- [x] src/macro-micro.rkt — micro.rkt's structure for macros, smallest
+      version: expressions only (lambda/let bind; if and primitive calls are
+      plain forms), one rule, flat patterns, template binders only (the
+      note's V1), no optimizations. Matching = a hygiene-blind skeleton
+      matcher + check-by-expansion against the model expander per site, so
+      the note's H1-H4 conditions are enforced without being implemented.
+      Utility by rewriting (micro's DP), with a whole-program
+      expand-and-alpha-compare assert after every rewrite. Iteration works
+      over corpora containing earlier macros' calls; learned names are
+      withheld from templates (no macros expanding to macro calls).
+- [ ] The note's V2: pattern variables in binder positions (my-lambda-style
+      capture, hygienically) — enumeration + skeleton only; the oracle
+      already understands them.
+- [ ] North-star benchmark: learn for/set from expanded folds (needs V2).
+- [ ] Adversarial review + fuzz (skeleton/oracle agreement invariants,
+      e.g. hand-built matcher vs oracle once one exists).
+- [ ] Later rungs per the note: ellipses, literals lists, definition
+      contexts (where the alpha-style reasoning provably stops working —
+      pearl appendix B.1/B.2 as adversarial tests).
