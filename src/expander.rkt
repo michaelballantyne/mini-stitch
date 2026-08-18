@@ -174,6 +174,14 @@
     ;; [extension] lambda: the binding half of `let`
     [`(,lambda-id (,x) ,body)
      #:when (equal? (kw-binding 'lambda) (resolve node lambda-id))
+     ;; [extension] a non-identifier in binder position is an expansion-time
+     ;; syntax error, reported as such -- macro transcription can put ANY
+     ;; syntax here (a pattern variable in a template's binder slot receives
+     ;; whatever the call supplied), and a contract violation from
+     ;; identifier-symbol would misreport that user-level error as a bug in
+     ;; this file.
+     (unless (identifier? x)
+       (error 'expand "lambda binder is not an identifier: ~a" x))
      (define x^ (fresh-binding-identity (identifier-symbol x)))
      (define node^ (new-scope node))
      (bind! node^ x (var-binding x^))
@@ -186,6 +194,9 @@
      `(block . ,def*^^)]
     [`(,let-id ([,x ,e]) ,b)
      #:when (equal? (kw-binding 'let) (resolve node let-id))
+     ;; [extension] same guard as lambda's, for the same reason
+     (unless (identifier? x)
+       (error 'expand "let binder is not an identifier: ~a" x))
      (define x^ (fresh-binding-identity (identifier-symbol x)))
      (define node^ (new-scope node))
      (bind! node^ x (var-binding x^))
