@@ -14,8 +14,10 @@
 ;; macro means replacing a subexpression by a call (m e1 ... ek) that would
 ;; EXPAND BACK to it?  Design: notes/2026-08-18-0323-syntax-rules-learning-
 ;; design.md.  This file is the smallest version that note admits: expressions
-;; only, one rule, flat patterns, no ellipses; template binders only in binder
-;; positions (the note's V1); no optimizations of any kind.
+;; only, one rule, flat patterns, no ellipses; binder positions hold either an
+;; anonymous template binder or a pattern variable (the note's V2, notes/
+;; 2026-08-18-0323-syntax-rules-learning-design.md section 5 "V1 vs V2"); no
+;; optimizations of any kind.
 ;;
 ;; WHAT REPLACES BETA
 ;;
@@ -76,7 +78,12 @@
 ;;                name would be information the semantics ignores); they get
 ;;                names only when the template is rendered as syntax-rules.
 ;; (tvar j) appears in binder positions and, as a reference, in expression
-;; positions; (pvar i) and 'hole appear in expression positions only.
+;; positions; 'hole appears in expression positions only.  (pvar i) appears
+;; in expression positions AND, as of V2, in binder positions: there the
+;; macro user supplies the binder's NAME as pattern variable #i's argument,
+;; so a use-site binder introduced by the call can hygienically capture
+;; use-site references passed as other arguments -- exactly the sites H1
+;; blocks a template-binder-only (V1) template from reaching.
 ;;
 ;; A Path is a list of element indices from a form's root down into it: in
 ;; (lambda (x) body), body is at (2); in (let ([x rhs]) body), rhs is at
@@ -215,14 +222,20 @@
 ;; production may name there -- or #f if the template is finished.  A let's
 ;; right-hand side does not see the let's own binder, matching the expander.
 (define (hole-scope tpl)
+  ;; binder-scope : Sexpr (Listof Natural) -> (Listof Natural)
+  ;; A binder-position tvar extends the tvar scope; a binder-position pvar
+  ;; extends nothing -- references to it are written as that same pvar in
+  ;; expression position, an existing production.
+  (define (binder-scope binder scope)
+    (if (tvar? binder) (cons (tvar-j binder) scope) scope))
   (let/ec found
     (let walk ([t tpl] [scope '()])
       (cond [(eq? t 'hole) (found scope)]
             [(lambda-form? t)
-             (walk (caddr t) (cons (tvar-j (car (cadr t))) scope))]
+             (walk (caddr t) (binder-scope (car (cadr t)) scope))]
             [(let-form? t)
              (walk (cadr (caadr t)) scope)
-             (walk (caddr t) (cons (tvar-j (car (caadr t))) scope))]
+             (walk (caddr t) (binder-scope (car (caadr t)) scope))]
             [(list? t) (for ([e (in-list t)]) (walk e scope))]
             [else (void)]))
     #f))
@@ -299,6 +312,9 @@
     (check-equal? (hole-scope (fill-hole U 'g)) '(0))
     ;; a let's right-hand-side hole does not see the let's binder
     (check-equal? (hole-scope `(let ([,(tvar 0) hole]) hole)) '())
+    ;; a pvar binder (V2) adds no tvar reference: it is use-site syntax, not
+    ;; a template binder, so nothing is in scope beneath it
+    (check-equal? (hole-scope `(lambda (,(pvar 0)) hole)) '())
     (check-false (hole-scope T))))
 
 ;; ---------------------------------------------------------------------------
@@ -310,15 +326,33 @@
 ;; each pattern variable receive?  Returns one (path . argument) per pattern
 ;; variable, in index order; the path is the FIRST occurrence's, and it is
 ;; where the rewriter recurses.  Deliberately hygiene-blind:
-;;   * a tvar in binder position matches whatever name the site binds there;
+;;   * a tvar in binder position matches whatever name the site binds there,
+;;     recording nothing;
+;;   * a pvar in binder position (V2) is matched by the SAME first-occurrence
+;;     rule as a pvar in expression position, taking the site's binder NAME
+;;     (a bare symbol, not a subterm) as the argument;
 ;;   * a tvar in expression position matches any identifier;
-;;   * later occurrences of a pattern variable match anything at all;
+;;   * later occurrences of a pattern variable -- in either kind of position
+;;     -- match anything at all;
 ;; every one of those judgments is deferred to the expansion oracle.  Only
 ;; shape is settled here -- in particular a binding form only matches a
-;; template written with that binding form, so holes and pattern variables
-;; stand at expression positions and nothing else.
+;; template written with that binding form, and holes stand at expression
+;; positions and nothing else.
 (define (skeleton-match tpl t)
   (define arity (template-arity tpl))
+  ;; match-binder : (U tvar pvar) Symbol Path (HashOf Natural (cons Path Any))
+  ;;               -> (HashOf Natural (cons Path Any))
+  ;; The binder position's own judgment, parallel to the pvar/tvar cases of
+  ;; `walk` below but never reached by it (walk only recurses into a binding
+  ;; form's expression parts). A tvar binder matches whatever name the site
+  ;; binds there and records nothing (H3). A pvar binder is the site's binder
+  ;; NAME, by the identical first-occurrence rule as an expression-position
+  ;; pvar: recorded if this is the first sighting of that index, ignored
+  ;; (matches anything) on a later one.
+  (define (match-binder binder-p binder-sym binder-path binds)
+    (cond [(tvar? binder-p) binds]
+          [(hash-has-key? binds (pvar-i binder-p)) binds]
+          [else (hash-set binds (pvar-i binder-p) (cons binder-path binder-sym))]))
   (define (walk p t path binds)
     (cond
       [(eq? p 'hole) binds]
@@ -329,10 +363,14 @@
       [(tvar? p) (and (symbol? t) binds)]
       [(lambda-form? p)
        (and (lambda-form? t)
-            (walk (caddr p) (caddr t) (append path '(2)) binds))]
+            (walk (caddr p) (caddr t) (append path '(2))
+                  (match-binder (car (cadr p)) (car (cadr t))
+                                (append path '(1 0)) binds)))]
       [(let-form? p)
        (and (let-form? t)
-            (let ([binds (walk (cadr (caadr p)) (cadr (caadr t))
+            (let* ([binds (match-binder (car (caadr p)) (car (caadr t))
+                                        (append path '(1 0 0)) binds)]
+                   [binds (walk (cadr (caadr p)) (cadr (caadr t))
                                (append path '(1 0 1)) binds)])
               (and binds
                    (walk (caddr p) (caddr t) (append path '(2)) binds))))]
@@ -365,7 +403,18 @@
     ;; a later occurrence of a pattern variable matches anything (H4 is the
     ;; oracle's business); the first occurrence is the argument
     (check-equal? (skeleton-match `(g ,(pvar 0) ,(pvar 0)) '(g 1 2))
-                  (list (cons '(1) 1)))))
+                  (list (cons '(1) 1)))
+    ;; V2: a pvar in binder position takes the site's binder NAME as its
+    ;; argument -- the first-occurrence rule applies there too, so the later
+    ;; reference in the body records nothing
+    (define T2 `(lambda (,(pvar 0)) (f ,(pvar 0) ,(pvar 1))))
+    (check-equal? (skeleton-match T2 '(lambda (x) (f x (g x))))
+                  (list (cons '(1 0) 'x) (cons '(2 2) '(g x))))
+    ;; ... and the matcher still doesn't check consistency of later
+    ;; occurrences (H4 again is the oracle's business): the body's reference
+    ;; to #0 need not even be spelled the same as the binder it names
+    (check-equal? (skeleton-match T2 '(lambda (x) (f y (g x))))
+                  (list (cons '(1 0) 'x) (cons '(2 2) '(g x))))))
 
 ;; ---------------------------------------------------------------------------
 ;; The oracle: does this rewrite expand back?
@@ -473,6 +522,14 @@
     ;; H1: an argument that mentions the matched binder cannot be passed --
     ;; the template's binder is freshened away from it at expansion
     (check-equal? (sites-of '(lambda (y) (f y (g y)))) '())
+    ;; V2 rescue: the very site H1 just refused has a valid root site once
+    ;; the binder position holds a pvar instead of a tvar -- the argument
+    ;; for #0 is the binder's own NAME, so #1's reference to it is use-site
+    ;; syntax on both ends and transcribes back literally
+    (define T-v2 `(lambda (,(pvar 0)) (f ,(pvar 0) ,(pvar 1))))
+    (define capturing '(lambda (y) (f y (g y))))
+    (check-equal? (valid-sites '() 'm T-v2 capturing (expand-under '() capturing))
+                  (hash '() (list (cons '(1 0) 'y) (cons '(2 2) '(g y)))))
     ;; H2: the template's free f must mean the definition site's f
     (define shadowed '(lambda (f) (f (f 9 1) 1)))
     ;; the inner (f (f 9 1) 1)-shaped sites use the LOCAL f: no match...
@@ -648,17 +705,27 @@
   (define scope (hole-scope tpl))
   (define arity (template-arity tpl))
   (define next (template-tvars tpl))
+  ;; binder-pvars : (Listof Pvar)
+  ;; The pattern variables a binder position may hold (V2): every pvar index
+  ;; already in use (reuse) plus one fresh index, if the arity limit allows.
+  (define binder-pvars
+    (for/list ([i (in-range (if (< arity max-arity) (add1 arity) arity))])
+      (pvar i)))
   (append
    (for/list ([n (in-list lens)]) (make-list n 'hole))
-   (for/list ([b (in-list binders)])
-     (case b
-       [(lambda) `(lambda (,(tvar next)) hole)]
-       [(let) `(let ([,(tvar next) hole]) hole)]))
+   (append*
+    (for/list ([b (in-list binders)])
+      (case b
+        [(lambda) (cons `(lambda (,(tvar next)) hole)
+                        (for/list ([bv (in-list binder-pvars)])
+                          `(lambda (,bv) hole)))]
+        [(let) (cons `(let ([,(tvar next) hole]) hole)
+                     (for/list ([bv (in-list binder-pvars)])
+                       `(let ([,bv hole]) hole)))])))
    (for/list ([j (in-list (sort scope <))]) (tvar j))
    syms
    lits
-   (for/list ([i (in-range (if (< arity max-arity) (add1 arity) arity))])
-     (pvar i))))
+   binder-pvars))
 
 (module+ test
   (test-case "corpus facts and expansions"
@@ -670,11 +737,14 @@
                   '(#t 1))
     (check-equal? lens '(2 3 4))              ; (g b), (f x 1), (if ...)
     (check-equal? binders '(lambda))
-    ;; at the top of a fresh template: no tvar references are in scope
+    ;; at the top of a fresh template: no tvar references are in scope, and
+    ;; the lambda binder position offers both an anonymous tvar and (V2) the
+    ;; one pvar index available at arity 0
     (check-equal? (expansions 'hole syms lits lens binders 1)
                   (append '((hole hole) (hole hole hole)
                             (hole hole hole hole))
-                          (list `(lambda (,(tvar 0)) hole))
+                          (list `(lambda (,(tvar 0)) hole)
+                                `(lambda (,(pvar 0)) hole))
                           syms lits (list (pvar 0))))))
 
 ;; skeleton-programs : Template (Listof Sexpr) -> (Setof Natural)
@@ -784,6 +854,43 @@
     (define-values (rewritten _) (rewrite-corpus '() 'm0 T programs))
     (check-equal? rewritten
                   '((m0 (g 2) (f 1)) (m0 #f (h 3)) (m0 9 k))))
+
+  (test-case "the search finds a V2 binder-position-pvar macro"
+    ;; each lambda's argument mentions its own binder -- H1 blocks any V1
+    ;; template with a tvar there, but a binder-position pvar (V2) passes the
+    ;; binder's own name through and rescues every site
+    (define programs '((lambda (x) (f x (g x)))
+                       (lambda (y) (f y (h y)))
+                       (lambda (z) (f z (k z 1)))))
+    (define T (macro-search programs))
+    (check-equal? T `(lambda (,(pvar 0)) (f ,(pvar 0) ,(pvar 1))))
+    ;; utility by hand, from the cost model (100/atom, 1/form, pvars 0):
+    ;;   corpus: (lambda (x) (f x (g x)))   4 forms, 6 atoms = 604
+    ;;           (lambda (y) (f y (h y)))                     = 604
+    ;;           (lambda (z) (f z (k z 1)))  4 forms, 7 atoms = 704
+    ;;           total 1912
+    ;;   macro:  3 forms (lambda, binder list, call), 2 atoms (lambda, f),
+    ;;           three pvars free -- 203
+    ;;   rewritten calls pay 1 (call form) + 100 (name) + each arg at cost:
+    ;;     (m0 x (g x))   1+100+100+201 = 402
+    ;;     (m0 y (h y))                 = 402
+    ;;     (m0 z (k z 1)) 1+100+100+301 = 502
+    ;;   after = 1306; utility = 1912 - 1306 - 203 = 403
+    (check-equal? (macro-utility '() T programs) 403)
+    (define-values (rewritten after) (rewrite-corpus '() 'm0 T programs))
+    (check-equal? rewritten '((m0 x (g x)) (m0 y (h y)) (m0 z (k z 1))))
+    (check-equal? after 1306))
+
+  (test-case "V2 mixes a template binder and a binder-position pvar"
+    ;; the for/set mechanism: an outer template binder (the accumulator) and
+    ;; an inner binder-position pvar (the iteration variable) under it, with
+    ;; a body pvar under both
+    (define T `(lambda (,(tvar 0))
+                 (lambda (,(pvar 0)) (cons ,(tvar 0) ,(pvar 1)))))
+    (define site '(lambda (acc) (lambda (elem) (cons acc (add elem q)))))
+    (check-equal? (valid-sites '() 'm T site (expand-under '() site))
+                  (hash '() (list (cons '(2 1 0) 'elem)
+                                  (cons '(2 2 2) '(add elem q))))))
 
   (test-case "nothing shared, nothing learned"
     (check-false (macro-search '((f 1) (g 2))))))
