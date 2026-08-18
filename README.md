@@ -21,6 +21,13 @@ abstraction bodies, arities, utilities, use counts, costs and rewritten programs
 **Start with [`walkthrough.md`](walkthrough.md)**, which traces the paper's own
 Section 2 running example end to end through both implementations.
 
+The repository has since grown a second act: **learning hygienic
+`syntax-rules` macros** — the stitch objective asked about *syntactic*
+abstractions, where using a learned macro means replacing a subexpression by
+a call that hygienically expands back to it. See
+[Learning macros instead of functions](#learning-macros-instead-of-functions)
+below.
+
 ## Layout
 
 ```
@@ -43,6 +50,15 @@ src/rewrite.rkt     greedy top-down rewriting with de Bruijn shift rules, plus
                     the cost-mismatch oracle
 src/compress.rkt    the iteration loop, JSON I/O, command-line entry point
 
+src/expander.rkt    the macro side begins here: the model hygienic expander
+                    from "Hygienic macro expansion explained" (Ballantyne &
+                    Rosenblatt), minimally extended (lambda, applications,
+                    globals, depth-1 ellipses)
+src/macro-micro.rkt micro-stitch for syntax-rules macros: which single
+                    hygienic macro compresses an s-expression corpus most?
+                    Matching = a hygiene-blind skeleton matcher checked by
+                    actually expanding every candidate rewrite
+
 tests/support.rkt   string<->AST bridges and helpers for the test files
 tests/micro-test.rkt     holds micro and mini to the same answers, and both
                     to the real binary
@@ -52,6 +68,13 @@ tests/differential.rkt   runs mini-stitch and the real binary on the same
 tests/fuzz.rkt      deterministic seeded fuzzer: mini's claimed utility
                     checked against micro's by-rewriting measurement on
                     random corpora (how the stitch bug was found)
+tests/macro-fuzz.rkt     the macro learner's fuzzer: random corpora through
+                    the learner's internal asserts, plus the inverse
+                    property (un-transcription inverts transcription)
+tests/for-set-test.rkt   the north-star benchmark: recover the for/set
+                    macro from expanded folds (~5 minutes, run knowingly)
+tests/my-when-test.rkt   binder-position pattern variables and ellipses in
+                    one learned macro
 notes/              design notes, a digest of the paper, a map of the Rust
                     implementation, and the write-up of a bug found in stitch
 stitch/             git submodule: the real stitch implementation
@@ -83,6 +106,9 @@ Run the whole test suite (unit tests plus the differential comparison):
 raco test src/ tests/
 ```
 
+(That now includes the macro learner's for/set benchmark, which is ~5
+minutes of deliberately naive search; everything else finishes in seconds.)
+
 The differential tests need the real binary. If the submodule is not checked out
 yet, `git submodule update --init`, then:
 
@@ -111,6 +137,32 @@ cd stitch && cargo build --release
   corpus small enough for it to finish — the sole exception being the corpus
   family where real stitch's own utility accounting is wrong (below), which is
   itself a passing test.
+
+## Learning macros instead of functions
+
+`src/macro-micro.rkt` asks stitch's question about syntactic abstractions:
+which single hygienic `syntax-rules` macro compresses a corpus of
+s-expression programs the most, where "using" the macro means replacing a
+subexpression by a call `(m e1 ... ek)` that hygienically **expands back**
+to it? The correctness criterion is referent-aware alpha-equivalence of
+expansions, and the method is the micro move one level up: none of the
+hygiene side conditions are implemented anywhere — every candidate rewrite
+is checked by actually running the model expander (`src/expander.rkt`, the
+appendix implementation from the pearl *Hygienic macro expansion
+explained*, Ballantyne & Rosenblatt) — hygiene-by-expansion, the twin of
+utility-by-rewriting.
+
+What it learns, on the checked-in benchmarks: the paper's `for/set`
+comprehension from four expanded folds (a template binder, a
+binder-position pattern variable, definition-site references, and an
+H2-shadowed program correctly refused); variadic macros like
+`(m x ...) => (f (g x) ...)` across three arities (abstraction over arity,
+which stitch cannot express); and a combined form binding a use-site name
+over a variadic body. Design notes: `notes/2026-08-18-0323` (the
+semantics), `notes/2026-08-18-1324` (ellipses), and
+`notes/2026-08-18-1541` (when un-transcription is well-defined). No prior
+work appears to occupy this problem — see the related-work survey,
+`notes/2026-08-18-0533`.
 
 ## Known deviations and limitations
 
