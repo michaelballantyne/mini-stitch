@@ -92,7 +92,7 @@ cd stitch && cargo build --release
 
 ## Results
 
-`raco test src/ tests/` — 83 test cases, all passing, including:
+`raco test src/ tests/` — 84 test cases, all passing, including:
 
 * **87 differential runs**: 21 corpora of `stitch/data/basic` × {max-arity 2, 3}
   × {1, 3 iterations}, plus `cogsci/nuts-bolts.json` (250 programs, arity 2, 3

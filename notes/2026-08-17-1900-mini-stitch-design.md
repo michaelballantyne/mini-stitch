@@ -225,4 +225,6 @@ spec (~200-300 lines) for the smallest corpora only. Design:
 - Role: second differential oracle (micro vs mini on tiny corpora) alongside
   mini vs real binary; pedagogical baseline. Walkthrough presents micro first,
   then mini as "the same thing, made fast". Shares parser/printer with mini
-  (import from expr.rkt).
+  (import from expr.rkt). [Update, post-restructure 2026-08-18: no longer
+  true -- micro shares only ast.rkt with mini; parsing/printing for the test
+  harness lives in tests/support.rkt.]

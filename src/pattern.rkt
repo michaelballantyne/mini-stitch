@@ -33,8 +33,9 @@
 ;; paths of its holes, the paths where each abstraction variable is used, and
 ;; the match locations themselves.  Expanding a hole filters the parent's
 ;; locations rather than re-walking the corpus, which is sound because a child
-;; pattern's locations are always a subset of its parent's (the paper's Lemma
-;; 2), and the corpus is never walked again after the first pass.
+;; pattern's locations are always a subset of its parent's (the observation
+;; that justifies the paper's Lemma 2), and expansion never walks the corpus
+;; again after the first pass.
 ;;
 ;; Self-overlap detection has no counterpart in micro.rkt at all.  micro scores
 ;; a candidate by actually rewriting the corpus, so two overlapping uses simply

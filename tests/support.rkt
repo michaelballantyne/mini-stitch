@@ -51,7 +51,11 @@
           [(captured? t)
            (add-node! scratch-corpus (prim (string->symbol
                                             (format "&~a" (captured-i t)))))]
-          [else (add-node! scratch-corpus t)]))
+          ;; Guard, because this module's whole job is comparison: without it,
+          ;; a non-Term slips through add-node! and prints as "", making two
+          ;; DIFFERENTLY malformed values compare equal.
+          [(or (prim? t) (var? t) (ivar? t)) (add-node! scratch-corpus t)]
+          [else (error 'term->string "not a term: ~s" t)]))
   (expr->string scratch-corpus (intern t)))
 
 ;; canonical : Pattern -> String

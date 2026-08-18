@@ -13,60 +13,72 @@
 ;;
 ;; WHAT THIS IS, RELATIVE TO THE PAPER
 ;;
-;; This file does NOT implement the paper's algorithm.  The paper's algorithm
-;; (Section 3.1, Algorithm 1) is a corpus-guided top-down search: a branch and
-;; bound with upper-bound pruning, dominance pruning, and a best-first worklist,
-;; all built in from the start.  None of that is here.
+;; This file does NOT implement the paper's algorithm.  The algorithm the paper
+;; presents (narrated in Section 3.1; the pseudocode is Algorithm 1 in Appendix
+;; A) is a corpus-guided top-down search: a branch and bound with upper-bound
+;; pruning, dominance pruning, and a best-first worklist, all built in from the
+;; start.  Almost none of that is here -- "almost", because two small pieces of
+;; the paper's corpus-guidance do appear below: hole productions are drawn from
+;; the primitives that occur in the corpus rather than from a whole DSL grammar,
+;; and candidates that match nowhere are dropped, which is Algorithm 1's
+;; zero-usage pruning (Lemma 2).  The paper's naive-approach paragraph instead
+;; stops expanding at a size bound (nothing larger than the largest program);
+;; both rules terminate and neither changes the answer.
 ;;
 ;; What this file implements is the paper's *objective* -- the thing that
-;; algorithm is an efficient way of reaching.  Find the abstraction maximizing
-;; the compression utility of Eq. 8, subject to the semantic filters real stitch
-;; applies by default:
+;; algorithm is an efficient way of reaching.  Find the abstraction of at most
+;; `max-arity` variables that maximizes the compression utility of Eq. 8 and
+;; saves something at all, subject to the semantic filters the paper's Section 6
+;; adopts for all its experiments and real stitch applies by default:
 ;;
-;;   * the abstraction must appear in at least two programs;
-;;   * no de Bruijn variable may be free at the top of its body;
-;;   * a location whose argument would capture a binder that lives inside the
-;;     body is matched, but never rewritten;
+;;   * the abstraction must appear in at least two programs.  This is the
+;;     paper's own rule (Section 6: DreamCoder "prunes the abstractions that
+;;     are only useful in programs from a single task", each program its own
+;;     task when no tasks are given), and it is a judgement about what we want,
+;;     not a speed hack;
+;;   * no de Bruijn variable may be free at the top of its body -- an
+;;     abstraction with one is not a function;
+;;   * the identity body, a bare abstraction variable, is not an abstraction;
 ;;   * argument capture (Section 4.3) is imposed, which is not a mere speed
 ;;     measure: by the paper's own footnote 2 it can rule out an abstraction
 ;;     that would have scored better, so it is part of WHAT stitch computes and
-;;     not only of how fast.
+;;     not only of how fast.  Redundant argument elimination (the other Section
+;;     4.3 filter) genuinely is dominance-safe and could be dropped without
+;;     changing what is optimal; it is kept because it costs a few lines and it
+;;     settles ties the same way stitch settles them.
 ;;
 ;; It reaches that objective by the enumeration the paper itself describes and
 ;; then discards -- "A Naive Approach", Section 3.1, the paragraph just before
 ;; pruning is introduced -- grow the partial abstraction `??` by filling one
-;; hole at a time with every production of the grammar, keep whatever still
-;; matches the corpus somewhere, and score every finished candidate.  And it
+;; hole at a time with every production that could still match, keep whatever
+;; does match the corpus somewhere, and score every finished candidate.  And it
 ;; takes the paper's Section 4.4 rewriting dynamic program as the *definition*
 ;; of utility rather than as one way to compute it: to score a candidate, we
 ;; actually rewrite the corpus with it and see how much smaller the corpus got.
 ;;
-;; One deviation from Eq. 8 read literally is deliberate, and follows the real
-;; implementation: the size charged for the abstraction itself is
-;; cost_{alpha=0}(A) -- abstraction variables cost nothing -- where Eq. 8 with
-;; the paper's Section 6 constants would charge cost_alpha = 100 per variable.
+;; Two deviations from the paper as written are deliberate, and both follow the
+;; real implementation:
+;;
+;;   * the size charged for the abstraction itself is cost_{alpha=0}(A) --
+;;     abstraction variables cost nothing -- where Eq. 8 with the paper's
+;;     Section 6 constants would charge cost_alpha = 100 per variable.  This
+;;     one is load-bearing: charged literally, the paper's own running example
+;;     (Section 2) would be won by the arity-zero (+ 3), not by the
+;;     lambda alpha beta. (+ 3 (* alpha beta)) the paper reports;
+;;   * a location whose argument would have to capture a lambda *inside* the
+;;     abstraction body still COUNTS as a match -- for the two-programs rule
+;;     among other things -- and is only refused at rewriting time.  The
+;;     paper instead discards such locations from Matches entirely (Section 3,
+;;     "Match Locations": mappings binding &i indices to abstraction variables
+;;     are dropped).  The &i indices themselves are Section 3's (Fig. 4-5);
+;;     this file's `captured` struct plays their role.
 ;;
 ;; So: this file pins down what the answer IS.  How to compute it fast is
-;; somebody else's problem.
-;;
-;; WHAT IS KEPT, BECAUSE DROPPING IT WOULD CHANGE THE ANSWER
-;;
-;;   * zero-match pruning.  A candidate that matches nowhere can never grow into
-;;     one that matches somewhere, so nothing is lost by dropping it -- and it
-;;     is also what makes the enumeration finite at all;
-;;   * the two-programs rule.  An abstraction is meant to capture something
-;;     shared; one confined to a single program wins on raw cost while being
-;;     useless.  This is stitch's default single-task pruning, and it is a
-;;     judgement about what we want, not a speed hack;
-;;   * no de Bruijn variable free at the top of the body -- an abstraction with
-;;     one is not a function;
-;;   * the paper's &i indices (Appendix B): a location whose argument would have
-;;     to capture a lambda *inside* the body is matched but never rewritten,
-;;     because there is no way to pass such an argument in from outside;
-;;   * the two Section 4.3 filters.  Argument capture, as noted above, changes
-;;     the answer.  Redundant argument elimination genuinely is dominance-safe
-;;     and could be dropped without changing what is optimal; it is kept because
-;;     it costs a few lines and it settles ties the same way stitch settles them.
+;; somebody else's problem.  On one family of corpora -- a multiply-used
+;; variable whose argument contains further matches of the same pattern --
+;; real stitch's analytic utility accounting disagrees with what rewriting
+;; actually achieves, and scoring-by-rewriting is the side that is right;
+;; see the regression test in tests/micro-test.rkt.
 ;;
 ;; DATA DEFINITIONS
 ;;
@@ -738,19 +750,18 @@
     (cond
       [(null? frontier) best]
       [else
-       (define-values (next best* best-utility*)
-         (for*/fold ([next '()] [best best] [best-utility best-utility])
-                    ([p (in-list frontier)]
-                     [child (in-list (surviving-children p prims max-arity
-                                                         programs))])
-           (cond
-             [(finished? child)
-              (define u (abstraction-utility child programs))
-              (if (> u best-utility)
-                  (values next child u)
-                  (values next best best-utility))]
-             [else (values (cons child next) best best-utility)])))
-       (level (reverse next) best* best-utility*)])))
+       (define children
+         (append-map (lambda (p) (surviving-children p prims max-arity programs))
+                     frontier))
+       (define-values (done open) (partition finished? children))
+       (define-values (best* best-utility*)
+         (for/fold ([best best] [best-utility best-utility])
+                   ([c (in-list done)])
+           (define u (abstraction-utility c programs))
+           (if (> u best-utility)
+               (values c u)
+               (values best best-utility))))
+       (level open best* best-utility*)])))
 
 ;; ---------------------------------------------------------------------------
 ;; Iteration

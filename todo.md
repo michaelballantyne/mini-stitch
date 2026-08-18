@@ -58,8 +58,19 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
       paper relationship stated precisely (implements the paper's OBJECTIVE
       via its discarded "naive approach", NOT Algorithm 1). See
       notes/2026-08-18-0246-micro-first-restructure.md.
-- [ ] Second adversarial review (Opus) of the restructure, focused on the
-      micro/paper relationship framing
+- [x] Second adversarial review (Opus) of the restructure —
+      notes/2026-08-18-0300-adversarial-review-2.md. All findings fixed:
+      micro's paper framing corrected (Algorithm 1 is Appendix A; the
+      capture-locations-count-as-matches rule is stitch's, diverging from the
+      paper's discard-from-Matches, now signposted as a second deviation; the
+      >=2-programs rule attributed to the paper's own Section 6; corpus-prims
+      and zero-match honesty; the cost_{alpha=0} deviation noted as
+      load-bearing — literal Eq. 8 flips the paper's own example); micro
+      header regains the over-count pointer; delta-section errors in
+      search.rkt/expr.rkt fixed; ast.rkt arena forward-ref removed;
+      support.rkt term->string guarded; stale counts/notes updated.
+      Also: micro-search's for*/fold simplified to append-map + partition +
+      two-accumulator fold (Michael's question).
 - [x] Adversarial review (Fable subagent) — notes/2026-08-17-2110; all
       findings fixed: walkthrough section 6 lgg claim corrected, penalty
       divergence signposted, README overclaim fixed, tie enforcement made

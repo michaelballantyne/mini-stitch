@@ -77,9 +77,8 @@ utility(A) = cost(corpus) - cost(rewrite(corpus, A)) - cost(A)
 structure penalty, weight 1). In the abstraction's own cost, abstraction
 variables are free of charge (`term-cost` gives `(ivar i)` cost 0): they are
 parameters, not structure. The function is the paper's `cost_{α=0}` (defined
-after Eq. 9) — but note this is one more place where we follow the
-implementation against the paper's letter, in the same category as sentinels
-instead of `&i` and the greedy rewrite instead of the DP. The paper's utility
+after Eq. 9) — but note this is one place where both implementations follow
+real stitch against the paper's letter (§7 collects the others). The paper's utility
 (Eq. 8) charges the abstraction at full `cost(A)` with `cost_α = 100` in the
 experimental configuration, which on `simple1` would give `202 − 302 = −100`;
 real stitch charges `−cost_{α=0}(A)` (its `noncompressive_utility` is minus the
@@ -87,10 +86,12 @@ body's concrete cost, with ivar expansions contributing nothing), which gives
 the `200` that both implementations and the binary report. Reconciling Eq. 8
 against the code requires knowing this substitution.
 
-Both implementations also inherit two of stitch's *semantic* defaults, which are
-choices about what we want rather than speed hacks: an abstraction body may not
+Both implementations also inherit two *semantic* rules, which are choices
+about what we want rather than speed hacks: an abstraction body may not
 contain a free de Bruijn variable, and an abstraction must match in **at least
-two distinct programs**.
+two distinct programs**. The second is the paper's own (its Section 6 adopts
+DreamCoder's rule that an abstraction useful in a single task is overfitting,
+with each program its own task), and stitch applies it by default.
 
 ---
 
@@ -193,7 +194,7 @@ Lifting gives `(+ 3 &0)`; the site is dropped by the rewriter.
 ### 2.4 The filters, each with a candidate it killed here
 
 `reject?` runs on every child. On this corpus, of 828 children generated (each
-counted against the first filter that applies, in `reject?`'s own order):
+counted against the first filter that applies to it):
 
 | filter | count | a candidate it killed |
 |---|---|---|

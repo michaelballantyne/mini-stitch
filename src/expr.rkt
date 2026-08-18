@@ -4,9 +4,11 @@
 ;; expr.rkt --- the corpus of mini-stitch
 ;; ---------------------------------------------------------------------------
 ;;
-;; This module begins mini-stitch, which computes exactly what micro.rkt
-;; computes -- the abstraction that compresses a corpus most -- but fast enough
-;; to run on real corpora.  The language is the same one (ast.rkt); the
+;; This module begins mini-stitch, which computes what micro.rkt computes --
+;; the abstraction that compresses a corpus most -- but fast enough to run on
+;; real corpora.  (The agreement is exact except on one corpus family where
+;; real stitch's own utility accounting, which mini reproduces, disagrees
+;; with micro's scoring-by-rewriting; see tests/micro-test.rkt.)  The language is the same one (ast.rkt); the
 ;; representation is not.  micro.rkt keeps each program as an ordinary immutable
 ;; tree and asks whether two subtrees agree with `equal?`.  mini-stitch instead
 ;; stores every subtree of every program exactly once, in a single hash-consed
@@ -497,11 +499,13 @@
                (cond
                  [(var? n) COST-VAR]
                  ;; Ivars in this arena are capture sentinels inside shifted
-                 ;; argument copies, and nothing ever prices those: the
-                 ;; multiuse bonus prices the unshifted argument, and body
-                 ;; sizes are accumulated incrementally (with abstraction
+                 ;; argument copies, and nothing ever prices a sentinel-bearing
+                 ;; copy: the multiuse bonus prices the unshifted argument, and
+                 ;; body sizes are accumulated incrementally (with abstraction
                  ;; variables at 0) rather than through this function.
-                 ;; Raising keeps the function total and the claim checked.
+                 ;; (Sentinel-free shifted copies may be priced -- one test
+                 ;; does -- and never reach this branch.)  Raising keeps the
+                 ;; function total and the claim checked.
                  [(ivar? n) (error 'cost "asked to price an abstraction variable (Idx ~a); nothing in the pipeline should ever do this" idx)]
                  [(prim? n) COST-PRIM]
                  [(app? n) (+ COST-APP

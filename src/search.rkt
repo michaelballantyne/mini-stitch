@@ -32,10 +32,10 @@
 ;; have:
 ;;
 ;;   * micro's frontier is a FIFO list processed level by level, and every
-;;     candidate that matches anywhere is expanded.  There is no upper bound to
-;;     maintain, hence no priority queue and no branch and bound.  Ours is a
-;;     max-heap on the bound, and a pattern whose bound cannot beat the best
-;;     abstraction so far is discarded unexpanded.
+;;     candidate that survives its filters is expanded.  There is no upper
+;;     bound to maintain, hence no priority queue and no branch and bound.
+;;     Ours is a max-heap on the bound, and a pattern whose bound cannot beat
+;;     the best abstraction so far is discarded unexpanded.
 ;;   * micro has no arity-zero priming: an arity-zero abstraction is just a
 ;;     candidate with no abstraction variables, and its enumeration reaches it
 ;;     like any other.  We score all of them up front, so that the bound has
@@ -46,10 +46,13 @@
 ;;     used/unused split and the `num-paths` weighting below are all things that
 ;;     follow from that definition and have to be re-derived here because we
 ;;     refuse to do the rewriting.
-;;   * micro keeps only the prunings that change the answer (zero matches, the
-;;     two-programs rule, the free-variable rule, and the two Section 4.3
-;;     filters).  The dominance-safe prunings -- single-use pruning above all --
-;;     exist here purely for speed.
+;;   * micro's filters are the semantic ones (the two-programs rule, the
+;;     free-variable rule, the identity-body rule, argument capture) plus two
+;;     that are answer-preserving: zero-match pruning, which also terminates
+;;     its enumeration, and redundant-argument elimination, kept for tie
+;;     agreement.  The remaining dominance-safe prunings here -- single-use
+;;     pruning above all -- exist purely for speed and have no micro
+;;     counterpart.
 ;;
 ;; The one thing micro does that we do not is get self-similar corpora right;
 ;; see rewrite.rkt's `check-cost-mismatch`.

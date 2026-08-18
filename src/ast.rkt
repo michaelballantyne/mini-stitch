@@ -26,8 +26,8 @@
 ;; ((a b) c).  There is no n-ary application node.
 ;;
 ;; The child fields -- an app's `fun` and `arg`, a lam's `body` -- hold whatever
-;; the program representation at hand puts there: a nested Node, or an index
-;; into an arena of Nodes.
+;; the program representation at hand puts there: a nested Node, or an integer
+;; naming a Node in some table.
 ;;
 ;; A Cost is an integer, in the cost model below.
 ;; ---------------------------------------------------------------------------
