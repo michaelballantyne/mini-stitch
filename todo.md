@@ -146,15 +146,47 @@ means replacing a subexpression by a call that hygienically expands back.
       expression, binder-position arguments are excluded like lambda's
       binder. Mask derived from the template (template-binder-mask), no
       mdef change.
-- [ ] Function-shaped classification (cheap): macros strictly dominate
-      functions under the compression objective, so report WHY each
-      learned template needed to be a macro; later, learn functions AND
-      macros with define/letrec + the for/list-over-map layering
-      benchmark. Analysis: notes/2026-08-18-0539.
-- [ ] Combined benchmark: a variadic binder-ful corpus (my-when/begin
-      style bodies under a lambda) exercising V2 and ellipses together.
-- [ ] Later rungs per the notes: literals lists, non-trailing/multiple
-      ellipses (will meet the zero-iteration pruning interaction again),
-      Racket's own expander as the outermost differential oracle,
-      core-Racket then surface-Racket corpora, definition contexts
-      (B.1/B.2 as adversarial tests), recursive macros.
+- [x] Combined benchmark: a variadic binder-ful corpus exercising V2 and
+      ellipses together -- tests/my-when-test.rkt (landed session 2's final
+      hour; this box went stale).
+
+## Plan (2026-08-18 review)
+
+Reordered per the independent review (notes/2026-08-18-1700) and its
+distilled plan (notes/2026-08-18-1730, which carries the concrete
+deliverables per item). Principle: the macro act has expressiveness without
+act one's three foundations -- a single readable narrative, a trust anchor
+outside the project, and an unbiased evaluation. Those first.
+
+- [ ] Consolidation pass: move comment archaeology (F-numbers, measurement
+      stories, container timings) from macro-micro.rkt and
+      tests/for-set-test.rkt into notes; de-clever skeleton-match's
+      box-parameter and 'seq-args key into an explicit return shape; hoist
+      expand-under out of best-candidate's per-candidate loop; write
+      walkthrough-macros.md (for/set end to end: H1 refusal, H2 refusal,
+      V2 rescue, utility arithmetic, the addendum-C two-coloring).
+- [ ] Racket's expander as the outer differential oracle: core-Racket
+      referent-aware alpha walker + namespace harness; replay the checked-in
+      corpora and benchmarks; then model-vs-Racket agreement on every oracle
+      query the learner makes. (notes/2026-08-18-0539 direction 1.)
+- [ ] Round-trip recovery fuzzing: sample a random N1-N4-respecting macro,
+      EXPAND random calls of it to manufacture the corpus, run the learner,
+      check recovery up to the catalogue's ambiguities; unexpected failures
+      are N5 candidates. Output: seeded recovery-rate table by mechanism
+      (V1 / V2 / ellipses / mixed).
+- [ ] Function-shaped classification, cheap policy only: classify the
+      winning template by the four eta-convertibility clauses and report
+      WHY it needed to be a macro. (notes/2026-08-18-0539 direction 3;
+      define/letrec and function learning stay deferred.)
+- [ ] Act two's mini: M2, the resolution-aware matcher
+      (notes/2026-08-18-0323 section 6), differential-tested against
+      check-by-expansion on everything the fuzzers generate; then
+      match-location indexing; then the branch-and-bound analog if needed.
+- [ ] Michael's calls: report the stitch utility over-count upstream
+      (notes/2026-08-17-2030); decide whether act two aims at a write-up
+      (reorders the items above -- see the plan note).
+
+Deliberately deferred until the three foundations exist: literals lists,
+non-trailing/multiple ellipses, define/letrec + the map/for-list layering
+benchmark, core-Racket then surface-Racket corpora, definition contexts
+(B.1/B.2 as adversarial tests), recursive macros.
