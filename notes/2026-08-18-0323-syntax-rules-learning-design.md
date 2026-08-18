@@ -477,3 +477,119 @@ filters, revisit; note the asymmetry rather than inheriting it.
   worth keeping? Candidate: after every corpus rewrite, run the oracle's
   whole-program check (expand + alpha-compare) — the rewriter asserting its
   own faithfulness, not just its cost.
+
+## Addendum (2026-08-18, after reading "Hygienic macro expansion explained")
+
+Michael shared the tex source of his and Gregory Rosenblatt's pearl
+(scope graphs / marked scope graphs / disjoin nodes) together with the
+appendix's model expander (`expandersimpler.rkt`: marks, a scope-graph
+`resolve`, syntax-rules matching and transcription, definition contexts,
+macro-defining macros — ~300 lines). Several ideas transfer directly; one
+corrects this note, and one puts a warning label on it.
+
+### A. The appendix model *is* M1′, ready-made — flip the build order
+
+§6 treated "a real marks/scope-sets expander as the oracle" (M1′) as a later
+luxury and the R2 transcriber as the first oracle. The model expander already
+exists, is small, and covers far more than §0's assumptions require (it
+handles even the Fig. 12 macro-defining-macro example). So invert the plan:
+
+- **The oracle comes first and is the model expander** (trimmed or near
+  verbatim). Check a rewrite by expanding both programs and comparing:
+
+      expand( (block defs... original) )
+      expand( (block (define-syntax m (syntax-rules () [(_ x1 ... xk) tmpl]))
+                     defs... rewritten) )
+
+  The model's output is *fully resolved* — every binder renamed to a unique
+  identity `x.n` — so "referent-aware alpha-equivalence" degenerates to
+  structural equality up to a bijection on identities (numbering depends on
+  counter order). One `expand` call per program per check; gloriously slow;
+  exactly the genre.
+- The R2 resolved-syntax transcriber becomes the thing that gets
+  differential-tested *against* the model, not the trusted base.
+- The corpus language question in §0 gets a concrete answer: adopt the
+  model's input language (numbers, vars, `let`, `block`/`define`,
+  `let-syntax`/`define-syntax`), possibly plus `lambda` (a small addition to
+  the model). Learned macros are then *emitted as programs in the model's
+  language* and checked end-to-end.
+
+### B. H2 is the model's `literal-match?`, stated properly
+
+The model matches syntax-rules literals by: both resolve to the same
+binding, OR both are unbound with the same symbol. That is H2, generalized
+and made precise. This note's phrasing "resolves globally / not shadowed" is
+the special case where the macro's definition context is the top level; the
+principled statement is *free-identifier=?*: the site identifier and the
+template identifier resolve the same way relative to the macro's definition
+site. Template free identifiers are pattern literals run in reverse — and
+future literals-list support (§9) uses the identical relation, already
+implemented in `make-literal-match?`.
+
+### C. Un-transcription = choosing a marking (inventing a disjoin)
+
+The paper's central picture: one macro expansion has *two* scoping-structure
+extensions — definition-site (marked) and use-site (unmarked) — sharing the
+template's shape, represented as one marked subgraph under a disjoin node
+whose projection edges point at the definition site and the use site. Run
+backwards, this is the crispest statement yet of what our matcher does:
+
+> Matching a template at a site = choosing which identifiers in the site
+> subtree receive the def-mark (template-origin) and which stay unmarked
+> (argument-origin), such that resolving every identifier through the
+> invented disjoin node reproduces the original program's resolutions.
+
+M2's rho bijection (§6) is exactly the correspondence between site scope
+nodes and the def-site extension; the template is the def-marked projection
+of the site, the arguments are the unmarked residue. Bonus: the fact that
+one template `lambda` contributes a scope node to *both* extensions cleanly
+explains V1 vs V2 (§5) — V1 templates bind only in the def-site copy, V2's
+binder-position pvars bind in the use-site copy — and shows a single binding
+list can mix the two, since `for/set` itself binds one def-site name (`v`)
+and one use-site name (`elem`) in the same lambda. That settles §10's
+open question about mixing: it's the normal case, not a rung.
+
+Also the visualization: the two-colored graph-extension figures are exactly
+what a walkthrough of the learner should draw — the learner reverse-engineers
+the coloring.
+
+### D. A warning label with an expiration date on H1–H4
+
+Appendix B.1 of the paper: when a macro is *used in the same definition
+context where it is defined*, a use-site `define` binding CAN capture a
+macro-introduced reference — real Scheme implementations do this, and
+alpha-renaming-style hygiene accounts (Herman & Wand's transparency
+side-condition; towards-essence's equivariance) forbid it. Appendix B.2:
+with mutually-recursive definition contexts, the referent of a transcribed
+free identifier may not even be *determined* at transcription time.
+
+H1–H4 are precisely an alpha-renaming-style account. They are right for
+§0's expression-only fragment, but they are the wrong *kind* of account the
+moment the corpus language includes definition contexts (`block`/`define`)
+or macros whose templates contribute definitions. The expand-and-compare
+criterion (§1) survives all of this untouched — which is the strongest
+argument yet for M1-as-specification: the oracle stays correct exactly where
+hand conditions become subtle. And it marks the boundary where M2 must trade
+the rho-bijection for genuine graph reasoning (scope separate from binding).
+B.1 and B.2's programs go straight into the future adversarial test set.
+
+### E. Marked graphs answer the rewritten-corpus representation question
+
+§4 noted R2's binder tags survive rewriting even when a reference's binding
+occurrence lands in a sibling argument. The principled version of that
+observation is the marked scope graph itself: the rewritten corpus's scoping
+structure is a graph with disjoin nodes, and resolution stays well-defined
+without re-expansion. For iteration (learning m2 over a corpus containing m1
+calls), "a learned macro extends the binding spec" (§7) is more honestly
+"a learned macro's calls carry marked-subgraph structure".
+
+### F. North-star benchmark: learn `for/set`
+
+The paper's running example is a perfect end-to-end target: generate a
+corpus of expanded `for/set`-style folds (varying iteration variable names,
+body expressions, sequences, surrounding scopes — including a program that
+locally shadows `set-add`, to exercise H2) and ask whether the system
+recovers the macro. It exercises a template binder (`v`), a binder-position
+pvar (`elem`), definition-site references (`sequence-fold`, `set-add`,
+`set`, `lambda`), and a body pvar under both binders — every mechanism in
+this note in one benchmark.
