@@ -785,15 +785,17 @@
 ;; Iteration
 ;; ---------------------------------------------------------------------------
 
-;; A Learned records one iteration's answer:
+;; A Learned records one iteration's answer -- only the facts that cannot be
+;; recomputed from it:
 ;;   body        the abstraction body, a finished Pattern
-;;   arity       how many arguments it takes
-;;   utility     cost saved, less the cost of the abstraction itself
-;;   compressive cost saved
-;;   final-cost  what the corpus costs after rewriting
+;;   utility     cost saved, less the cost of the abstraction itself.  (Not
+;;               derivable after the fact: it involves the cost of the corpus
+;;               the iteration STARTED from, which the record does not keep.)
 ;;   programs    the rewritten corpus, which the next iteration learns from
-(struct learned (body arity utility compressive final-cost programs)
-  #:transparent)
+;; Everything else people ask about follows: the arity is
+;; (pattern-arity body), the rewritten corpus's cost is
+;; (corpus-cost programs), and the raw saving is (+ utility (term-cost body)).
+(struct learned (body utility programs) #:transparent)
 
 ;; learn-one : (Listof Term) Natural Symbol -> (U Learned #f)
 ;; One whole iteration: find the best abstraction, rewrite the corpus with it
@@ -809,17 +811,15 @@
      (unless (= predicted after)
        (error 'learn-one "the DP promised cost ~a; rewriting gave ~a"
               predicted after))
-     (learned body (pattern-arity body)
-              (- before after (term-cost body)) (- before after)
-              after rewritten)]))
+     (learned body (- before after (term-cost body)) rewritten)]))
 
 (module+ test
   (test-case "learn-one records one iteration"
     (define A (prim 'a)) (define B (prim 'b))
     (define l (learn-one (list (app (app A A) A) (app (app B B) B)) 2 'fn_0))
-    (check-equal? (learned-arity l) 1)
+    (check-equal? (pattern-arity (learned-body l)) 1)
     (check-equal? (learned-utility l) 200)      ; 604 -> 402, body costs 2
-    (check-equal? (learned-final-cost l) 402)
+    (check-equal? (corpus-cost (learned-programs l)) 402)
     ;; each program is now one call: (fn_0 a) and (fn_0 b)
     (check-equal? (learned-programs l)
                   (list (app (prim 'fn_0) A) (app (prim 'fn_0) B)))

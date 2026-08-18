@@ -143,9 +143,11 @@
                       2 2))
     (check-equal? (map (lambda (s) (term->string (learned-body s))) steps)
                   '("(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))" "(fn_0 (a b #0))"))
-    (check-equal? (map learned-arity steps) '(1 1))
+    (check-equal? (map (lambda (s) (pattern-arity (learned-body s))) steps)
+                  '(1 1))
     (check-equal? (map learned-utility steps) '(1011 101))
-    (check-equal? (map learned-final-cost steps) '(806 402))
+    (check-equal? (map (lambda (s) (corpus-cost (learned-programs s))) steps)
+                  '(806 402))
     (check-equal? (map term->string (learned-programs (last steps)))
                   '("(fn_1 c)" "(fn_1 z)")))
 
@@ -205,7 +207,7 @@
     (for ([step (in-list steps)] [k (in-naturals)])
       (printf "  iteration ~a: ~a  utility ~a  cost ~a\n"
               k (term->string (learned-body step))
-              (learned-utility step) (learned-final-cost step)))
+              (learned-utility step) (corpus-cost (learned-programs step))))
     ;; each iteration's answer must be the one mini would have found on the
     ;; corpus that iteration started from
     (for/fold ([texts texts]) ([step (in-list steps)])
@@ -213,6 +215,9 @@
       (check-not-false mini)
       (when mini
         (check-equal? (learned-utility step) (mini:abstraction-utility mini))
-        (check-equal? (learned-compressive step) (mini:abstraction-compressive mini)))
+        ;; compressive = utility + cost of the body, by the definition of
+        ;; utility -- an algebraic identity both systems must satisfy
+        (check-equal? (+ (learned-utility step) (term-cost (learned-body step)))
+                      (mini:abstraction-compressive mini)))
       (map term->string (learned-programs step)))
     (void)))
