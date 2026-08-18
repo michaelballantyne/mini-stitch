@@ -361,8 +361,19 @@ sequential or arithmetic in Rust.
    minutes and 50 GB at arity 3. So stitch's own benchmarks do contain a
    real-runtime regime (tens of seconds to minutes), it just isn't the
    part mini-stitch replicated (bridge/city/house/castle are checked in
-   at `stitch/data/cogsci/` and unmeasured here so far — being measured
-   now, see `results-large.md` in the AU experiment folder). Still: the
+   at `stitch/data/cogsci/` and unmeasured here so far — see
+   `results-large.md` in the AU experiment folder for a partial
+   measurement, cut short by a credit stop). UPDATE (same day, measured):
+   that partial run cuts *against* the naive bottom-up formulation on
+   exactly the heavy domains — bridge is the first corpus where the
+   pairwise-AU space blows up (6,901 unique subtrees, 23.5M compatible
+   pairs, ≥3.95M distinct lggs at 35% of pairs when the 480 s timeout
+   hit, dedup ratio collapsed from 31–127x to ~2x, patterns with up to 50
+   variables), while on the logo/dc corpora stitch's top-down step count
+   is corpus-size-flat (nuts-bolts prefixes: 2,333 → 2,520 steps from 25
+   to 250 programs) and stays under 0.2 s where AU costs seconds. An
+   uncapped AU pass needs an arity/size bound during anti-unification to
+   survive bridge-like corpora (inference — untested). Still: the
    prior art (DreamCoder's version-space compressor) is orders of
    magnitude worse than stitch on all of these, so the top-down algorithm
    remains the efficiency solution; the open question is only whether the
@@ -446,7 +457,11 @@ generalizes — to equational matching, to k-best libraries, to incremental
 corpora. If the goal is a faster stitch on the corpora measured above,
 skip it. Whether the heavy end of stitch's own benchmarks (the tower
 domains, 17–77 s at arity 3 — see the correction in §6) leaves room for a
-speed story is an open measurement, in progress. Independent of that: if
+speed story is partially measured and currently leaning *no* for the
+uncapped formulation: bridge's pairwise-AU space explodes (§6 update)
+while stitch's step counts stay corpus-size-flat, so a competitive
+bottom-up system there would need AU-time arity/size caps — untested —
+and city/castle/house/furniture remain unmeasured. Independent of that: if
 the goal is understanding what library learning *is* as a set-at-a-time
 computation — this project's kind of goal — the AU formulation is worth
 building.

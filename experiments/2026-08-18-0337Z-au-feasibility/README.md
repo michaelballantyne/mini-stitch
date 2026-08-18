@@ -53,6 +53,12 @@ python3 gen_tables.py
 Corpora with stitch's fused-lambda tags (`lam_1`, `$0_1`: simple3/4/5 in
 data/basic) are detected at parse time and recorded as skipped.
 
+`results-large.md` extends the sweep to the larger corpora in the submodule
+(data/logo, data/dc incl. DreamCoder-format extraction via `extract_dc.py`,
+data/python, and the start of the remaining data/cogsci domains), driven by
+`run_large.py` with raw records in `results_large.jsonl`; it also adds the
+nuts-bolts prefix scaling of stitch's own worklist_steps.
+
 ## Definitions used
 
 - **Unique subtrees S**: arena size after hash-consed parsing (identical
