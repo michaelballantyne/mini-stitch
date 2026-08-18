@@ -35,12 +35,12 @@
 ;; Drop either one and the property goes false in general -- e.g. transcribing
 ;; `(lambda (#0) (lambda (#1) (f #0)))` with args `a a` produces a site whose
 ;; inner binder captures what the template aimed the outer one at, and no
-;; un-transcription recovers that.  Stage 3 (notes/2026-08-18-1324-ellipses-
-;; design.md section 5's fuzzer bullet): a fraction of generated templates now
-;; carry the one allowed (ellip sub) as a plain form's last element, with a
+;; un-transcription recovers that.  A fraction of generated templates carry
+;; the one allowed (ellip sub) as a plain form's last element, with a
 ;; random-length (0-3, zero included) sequence of closed arguments for its
-;; (svar), so the same inverse property is now also exercised across
-;; ellipsis templates, not just flat ones.
+;; (svar), so the same inverse property is exercised across ellipsis
+;; templates, not just flat ones (notes/2026-08-18-1324-ellipses-design.md,
+;; section 5).
 ;;
 ;;   raco test tests/macro-fuzz.rkt
 ;;   racket tests/macro-fuzz.rkt --trials 500 --property both [--seed 20260818]
@@ -389,7 +389,7 @@
     [else (mint-tvar! tv-box)]))
 
 ;; With this probability, a freshly-generated plain form becomes the
-;; template's one ellip (stage 3) -- see `gen-template`'s 'plain case below.
+;; template's one ellip -- see `gen-template`'s 'plain case below.
 ;; ~25%, so most templates stay ellip-free (property 2's original ground)
 ;; while a healthy minority exercise the new machinery.
 (define ELLIP-DENOM 4) ; 1-in-4 = 25%
@@ -479,11 +479,10 @@
 ;; pvar, per gen-binder above.  Both `scope` and `pscope` mirror
 ;; macro-micro.rkt's hole-scope exactly, including for pvar binders: a let's
 ;; right-hand side does not see the let's own binder, tvar or pvar alike.
-;; Stage 3 addition: `ellip-box`, a shared (Box Boolean) starting #f, is
-;; threaded into every recursive call so that at most one (ellip sub) is
-;; ever generated across the WHOLE template (design note's amendment: one
-;; ellip per template, not merely per form) -- see the 'plain case, the
-;; only place that ever sets it.  When a plain form under construction takes
+;; `ellip-box`, a shared (Box Boolean) starting #f, is threaded into every
+;; recursive call so that at most one (ellip sub) is ever generated across
+;; the WHOLE template (one ellip per template, not merely per form) -- see
+;; the 'plain case, the only place that ever sets it.  When a plain form under construction takes
 ;; that branch, the ellip's own mint-time pscope is recorded in `origin`
 ;; under the reserved key 'ellip-pscope (raw pvar indices, exactly like an
 ;; expr-pvar's own mint-time pscope -- see mint-pvar! -- so build-args can
@@ -543,10 +542,9 @@
 ;; pscope) and that decision must survive renumbering.  A pscope list is
 ;; itself a list of raw pvar indices, so remapping an 'expr entry recurses
 ;; remap-pvar over it too -- safe (no cycle) because a pvar can never be a
-;; member of its own pscope.  Stage 3: `walk` now also recurses into an
-;; ellip's sub (an ellip struct is not itself a list, so the plain `list?`
-;; case never used to see inside it -- harmless before stage 2 could ever
-;; produce one, a live bug once it can); and if `origin` carries the
+;; member of its own pscope.  `walk` also recurses into an ellip's sub (an
+;; ellip struct is not itself a list, so the plain `list?` case does not
+;; see inside it on its own); and if `origin` carries the
 ;; reserved 'ellip-pscope key (the ellip's own mint-time pscope, set by
 ;; gen-template), it is remapped too, AFTER the walk -- every raw index it
 ;; names is a binder-pvar that necessarily occurs as an actual binder node
@@ -587,7 +585,7 @@
 ;; random-finished-template : Pseudo-Random-Generator -> (values Template Hash)
 ;; Retries until the result is not a bare pattern variable (the identity
 ;; macro, which template-arity and the real search both refuse to consider).
-;; `ellip-box` (stage 3) starts fresh #f on every attempt, exactly like
+;; `ellip-box` starts fresh #f on every attempt, exactly like
 ;; pv-box/tv-box/origin -- a retry must not carry over "this template
 ;; already used its one ellip" from a discarded attempt.
 (define (random-finished-template rng)
@@ -723,7 +721,7 @@
 ;; macro-micro.rkt does (caught by an earlier version of this generator,
 ;; which drew names independently).
 ;;
-;; Stage 3: when `tpl` contains an ellip (recorded by gen-template as the
+;; When `tpl` contains an ellip (recorded by gen-template as the
 ;; 'ellip-pscope key in `origin`), a random-length sequence of TRAILING
 ;; arguments is appended after the fixed pvar arguments -- these are the
 ;; (mfz e1 .. earity s1 .. sn) call's s1..sn, i.e. the %xs VALUES
@@ -796,7 +794,7 @@
 ;;     just as much a legal match as any other, per the design note and
 ;;     macro-micro.rkt's own skeleton-match docstring).
 ;;   * path-consistency, always, for EVERY recovered entry (fixed pvar args
-;;     and, stage 3, trailing sequence args alike): each recovered
+;;     and trailing sequence args alike): each recovered
 ;;     (path . arg) pair must actually be what walking `site` by that path
 ;;     finds there -- i.e. valid-sites's internal skeleton-match is
 ;;     reporting the site's own structure back at us, not something else.
@@ -809,7 +807,7 @@
 ;;     (An argument that DOES reference a binder name or contain a lambda
 ;;     gets hygienically renamed by expansion, so no such direct comparison
 ;;     is available for it; path-consistency above is what covers it.)
-;;   * (stage 3) for a sequence argument whose si was built with an EMPTY
+;;   * for a sequence argument whose si was built with an EMPTY
 ;;     in-scope name list (the ellip's own mint-time pscope was empty, so
 ;;     F6a could not have referenced anything) and no lambda anywhere in it
 ;;     (F6b introduced none), the identical equal? argument applies: si is

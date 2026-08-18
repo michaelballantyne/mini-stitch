@@ -6,9 +6,9 @@ the learner's main benchmark — recovering the `for/set` comprehension from
 its own expansions (`tests/for-set-test.rkt`) — through every mechanism the
 module has: what a template is, how a candidate is matched, how hygiene is
 checked without being implemented, how utility is measured, and what the
-search around all of that looks like. A shorter second example shows the
-ellipsis. Every number and every expander output below is real; nothing is
-schematic.
+search around all of that looks like. Two shorter examples follow, for the
+ellipsis and for learning a second macro on top of the first. Every number
+and every expander output below is real; nothing is schematic.
 
 The question, precisely: micro.rkt asks *which function compresses this
 corpus most*. This module asks *which single hygienic `syntax-rules` macro
@@ -126,13 +126,16 @@ resolves to the binder just as it did in the original. A pattern variable in
 binder position is the mechanism that makes `for/set` learnable at all, as
 the next section shows by taking it away.
 
-## 4. Two rewrites that lie, and how they are caught
+## 4. Rewrites that lie, and how they are caught
 
 The learner never implements hygiene rules. It implements one function,
 `site-valid?`: build the call, expand the whole program, compare with
-`alpha=?`. The design note (notes/2026-08-18-0323) derives four conditions
-H1–H4 a faithful rewrite must satisfy; here is the oracle refusing two
-rewrites that violate them, with real outputs.
+`alpha=?`. The design note
+(notes/2026-08-18-0323-syntax-rules-learning-design.md) derives four
+conditions H1–H4 a faithful rewrite must satisfy; here is the oracle
+enforcing three of them, with real outputs. (The fourth, H3 — a template
+binder's name is irrelevant — is what section 3 already showed working:
+`v.1` against `%t0.1`.)
 
 **Capturing an argument (H1).** Suppose the template used a private binder
 for the iteration variable too — the natural first guess, since that is
@@ -180,6 +183,25 @@ own expansion (section 2) has `set-add.1`, the local. Same spelling in the
 source, different referents, plainly different expansions. `#f`; refused.
 The oracle finds no valid site anywhere in `p4`, and the benchmark asserts
 exactly that.
+
+**Duplicating an argument (H4).** A pattern variable used twice in a
+template is where compression really pays — and it imposes a condition on
+the site: expansion will produce two copies of *one* argument, so the site's
+two subterms had better mean the same thing. With `m2` defined as
+`(g %x0 %x0)`, the call `(m2 (lambda (a) a))` expands to
+
+```racket
+(g (lambda (a.1) a.1) (lambda (a.2) a.2))
+```
+
+That is alpha-equivalent to the expansion of `(g (lambda (a) a)
+(lambda (b) b))` — two identity functions, spelled differently, are still
+two identity functions — so that site is accepted; it is not equivalent to
+the expansion of `(g (lambda (a) a) (lambda (b) 1))`, so that site is
+refused. The matcher never compared the two subterms at all: it took the
+first as the argument and let the second match anything, because any
+disagreement is guaranteed to surface as an expansion mismatch at the
+other position.
 
 The division of labor this section illustrates is the module's whole design:
 `skeleton-match` settles *shape* and reads off arguments, deliberately blind
@@ -300,22 +322,59 @@ utility 607, rewriting the corpus to
 This is abstraction over arity, which stitch cannot express: its inventions
 have a fixed number of parameters, full stop.
 
-Two search lessons came out of this mechanism, both visible in the module.
-First, no filter is needed against the degenerate splice-everything
-template `(f (svar) ...)` — measured on this corpus it scores −201, because
-a call that repeats every element back verbatim saves nothing and pays for
-the macro; utility already knows. Second, one filter turned out to be
-necessary for the search to finish at all: an ellipsis candidate only
-counts as matching a program if it actually *iterates* there. A
-zero-iteration match — a site consisting of just the fixed prefix — is
-legal, but it never tests the sub-template against anything, so it carries
-no information about whether the candidate's shape is right; and prefixes
-that coincide with some short subterm are so common that counting such
-matches lets a candidate's sub-template grow unconstrained through the
-whole grammar. See `skeleton-programs`, and
-notes/2026-08-18-1505 for the measurements.
+Two facts about the search around this mechanism are worth knowing. The
+module needs no filter against the degenerate splice-everything template —
+`(f %xs ...)`, whose sub-template is a bare sequence variable — because a
+call that repeats every element back verbatim saves nothing and pays for
+the macro: on this corpus it scores −201, and utility already knows. The
+module does need one filter for the search to finish at all: an ellipsis
+candidate counts as matching a program only if it actually *iterates*
+there. A zero-iteration match — a site consisting of just the fixed
+prefix — is legal, but it never tests the sub-template against anything,
+so it carries no information about whether the candidate's shape is right;
+and prefixes that coincide with some short subterm are so common that
+counting such matches lets a candidate's sub-template grow unconstrained
+through the whole grammar. See `skeleton-programs`, and
+notes/2026-08-18-1505-session-2-review-ellipses.md for the measurements.
 
-## 8. Matching, seen through the scope graph
+## 8. Learning the next macro on top
+
+One macro is an abstraction; a *library* is macros learned on top of each
+other. `macro-compress` iterates: search, rewrite the corpus with the
+winner, search the rewritten corpus with the winner's name off limits.
+The module's own test corpus for this is what an earlier iteration would
+leave behind: a small lambda-wrapping macro `m0`, with template
+`(lambda (%t0) (f %t0 %x0))`, is already in the library, and its calls sit
+in the programs as plain forms:
+
+```racket
+(g (m0 1) (m0 1))
+(g (m0 2) (m0 2))
+(g (m0 3) (m0 3))
+```
+
+The search finds `(g %x0 %x0)` — a template whose argument *is a macro
+call*, which bothers the oracle not at all: expanding the rewritten
+`(m1 (m0 2))` under both macros gives
+
+```racket
+(g (lambda (%t0.1) (f %t0.1 2)) (lambda (%t0.2) (f %t0.2 2)))
+```
+
+exactly what `(g (m0 2) (m0 2))` expands to (note H4 at work again: one
+argument, two copies, each expansion freshening its own `%t0`). Two pieces
+of bookkeeping make iteration honest. A learned macro's name is withheld
+from the identifier productions, since a template that *mentions* a macro
+would be a macro expanding to a macro call, which the standing
+simplifications exclude. And a learned macro extends the object language's
+binding structure: if `m0`'s pattern variable `%x0` had been in binder
+position, then in a corpus call `(m0 x (g x))` the `x` at argument position
+one is a binder's name, not an expression — so `expr-children` masks it
+out of the expression positions exactly as it masks lambda's own binder,
+reading the mask off the library macro's template
+(`template-binder-mask`).
+
+## 9. Matching, seen through the scope graph
 
 There is a picture worth carrying away, from the scope-graph account of
 hygiene in "Hygienic macro expansion explained". One macro expansion
@@ -356,15 +415,17 @@ had it. But the coloring is what a successful match *means* — and reading
 `skeleton-match` plus `site-valid?` with this picture in mind is reading
 the module.
 
-## 9. Where to go from here
+## 10. Where to go from here
 
 `src/macro-micro.rkt` is written to be read top to bottom, with these
-sections in this order: the object language and its costs, templates, the
-skeleton matcher, the oracle, rewriting and utility, enumeration, the
-search, iteration. The semantics and the hygiene conditions are derived in
-notes/2026-08-18-0323; ellipses in notes/2026-08-18-1324; the cases where a
-transcription cannot be inverted — sharper than anything this walkthrough
-needed — are catalogued in notes/2026-08-18-1541. The benchmarks are
+sections in this order: shapes, positions and costs; templates; the
+skeleton matcher; the oracle; rewriting and utility; candidate enumeration;
+the search; iteration. The semantics and the hygiene conditions are derived
+in notes/2026-08-18-0323-syntax-rules-learning-design.md; ellipses in
+notes/2026-08-18-1324-ellipses-design.md; the cases where a transcription
+cannot be inverted — sharper than anything this walkthrough needed — are
+catalogued in notes/2026-08-18-1541-untranscription-noninjectivity.md. The
+benchmarks are
 `tests/for-set-test.rkt` (this walkthrough's example, several minutes) and
 `tests/my-when-test.rkt` (a binder-position pattern variable and an
 ellipsis forced to appear in one macro, seconds — its header is a lesson in

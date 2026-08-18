@@ -21,10 +21,10 @@ abstraction bodies, arities, utilities, use counts, costs and rewritten programs
 **Start with [`walkthrough.md`](walkthrough.md)**, which traces the paper's own
 Section 2 running example end to end through both implementations.
 
-The repository has since grown a second act: **learning hygienic
-`syntax-rules` macros** — the stitch objective asked about *syntactic*
-abstractions, where using a learned macro means replacing a subexpression by
-a call that hygienically expands back to it. See
+The repository also contains a second learner: **hygienic `syntax-rules`
+macros** — the stitch objective asked about *syntactic* abstractions, where
+using a learned macro means replacing a subexpression by a call that
+hygienically expands back to it. See
 [Learning macros instead of functions](#learning-macros-instead-of-functions)
 below.
 
@@ -164,11 +164,13 @@ binder-position pattern variable, definition-site references, and an
 H2-shadowed program correctly refused); variadic macros like
 `(m x ...) => (f (g x) ...)` across three arities (abstraction over arity,
 which stitch cannot express); and a combined form binding a use-site name
-over a variadic body. Design notes: `notes/2026-08-18-0323` (the
-semantics), `notes/2026-08-18-1324` (ellipses), and
-`notes/2026-08-18-1541` (when un-transcription is well-defined). No prior
+over a variadic body. Design notes:
+`notes/2026-08-18-0323-syntax-rules-learning-design.md`,
+`notes/2026-08-18-1324-ellipses-design.md`, and
+`notes/2026-08-18-1541-untranscription-noninjectivity.md` (when
+un-transcription is well-defined). No prior
 work appears to occupy this problem — see the related-work survey,
-`notes/2026-08-18-0533`.
+`notes/2026-08-18-0533-related-work-macro-learning.md`.
 
 ## Known deviations and limitations
 

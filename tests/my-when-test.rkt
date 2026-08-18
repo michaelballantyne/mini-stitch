@@ -29,8 +29,8 @@
 ;; fixed-arity template can ever cover two of them.
 ;;
 ;; A corpus has to be designed carefully to force both mechanisms, because
-;; the search is inventive about escaping them.  Two easier corpora were
-;; tried first, and each was won by something other than the target:
+;; the search is inventive about escaping them.  Two kinds of easier corpus
+;; are won by something other than the target:
 ;;
 ;;   1. When an identifier recurs verbatim in a fixed body position across
 ;;      programs (a shared `print` head), the winner absorbs the whole
@@ -57,12 +57,13 @@
 ;; than one program's sequence, so the fully generic `(svar)` is the only
 ;; template that can reach two or more programs with real iterations.
 ;;
-;; The margin is thin on purpose, to show how tight the arithmetic is:
-;; saving each of the three real programs nets exactly 103 (the shared fixed
-;; overhead of this shape -- the outer application form, the lambda's
-;; form/atom/binder-list, and `seq`'s own atom -- paid once by the macro
-;; instead of at every site); the macro itself costs 304; 3 x 103 = 309
-;; clears 304 by exactly 5.  Two real programs would not have cleared it.
+;; The margin is thin on purpose, to show how tight the arithmetic is.
+;; Rewriting one site sheds the shape's fixed material -- the `lambda` and
+;; `seq` atoms (200) and four forms (the application, the lambda, its binder
+;; list, the seq form: 4), 204 in all -- and pays 101 for the call's form
+;; and the macro's name: net 103 per site.  The macro itself costs 304, so
+;; 3 x 103 = 309 clears it by exactly 5, and two real programs would not
+;; have cleared it.
 ;;
 ;;   raco test tests/my-when-test.rkt
 ;; ---------------------------------------------------------------------------

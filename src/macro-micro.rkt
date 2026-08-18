@@ -15,8 +15,9 @@
 ;; EXPAND BACK to it?  Like micro.rkt, everything here is written to be read:
 ;; naive enumeration, matching from scratch, utility computed by actually
 ;; rewriting the corpus -- and one genuinely new move, described next.
-;; Design notes: notes/2026-08-18-0323 (the semantics), notes/2026-08-18-1324
-;; (ellipses); the worked example is walkthrough-macros.md.
+;; Design notes: notes/2026-08-18-0323-syntax-rules-learning-design.md (the
+;; semantics) and notes/2026-08-18-1324-ellipses-design.md; the worked
+;; example is walkthrough-macros.md.
 ;;
 ;; WHAT REPLACES BETA
 ;;
@@ -64,10 +65,11 @@
 ;; Only lambda and let BIND; every other form is a plain list whose elements
 ;; are all expressions -- `if` and primitive applications need no cases of
 ;; their own anywhere in this file, and their heads are ordinary free
-;; identifiers a template may mention.  Corpora are assumed well-formed and
-;; to not shadow the names `lambda` and `let` (the expander would still be
+;; identifiers a template may mention.  Corpora must be well-formed and must
+;; not shadow the names `lambda` and `let` (the expander would still be
 ;; right if they did; the position-walkers here would misread the program's
-;; shape).  `check-corpus`, at the end of this file, checks what it can.
+;; shape).  `check-corpus`, at the end of this file, rejects offenders up
+;; front.
 ;;
 ;; STANDING SIMPLIFICATIONS
 ;;
@@ -76,6 +78,13 @@
 ;; lists; no recursive macros, no macro-defining macros, and no macros that
 ;; expand to macro calls; the macro is defined at top level, so its
 ;; template's free identifiers resolve globally.
+;;
+;; Those simplify the LANGUAGE of macros considered.  Separately, the search
+;; does not propose every template that language admits: its productions are
+;; read off the corpus, and the ellipsis productions are narrowed further.
+;; Unlike micro.rkt, whose two prunings provably preserve the optimum, these
+;; width choices can lose a better macro; each one is recorded where it is
+;; made, at `expansions` and `skeleton-programs`.
 ;;
 ;; DATA DEFINITIONS
 ;;
@@ -1067,7 +1076,8 @@
 ;;              candidates that cannot win; a variadic family spread across
 ;;              DIFFERENT heads is missed -- a search-width choice of the
 ;;              same kind as proposing only corpus-observed lengths.
-;;              (Measurements: notes/2026-08-18-1505.)
+;;              (Measurements: notes/2026-08-18-1505-session-2-review-
+;;              ellipses.md.)
 (struct grammar (syms lits lens binders variadic?) #:transparent)
 
 ;; corpus-grammar : (Listof Sexpr) [(Listof MDef)] -> Grammar
@@ -1120,9 +1130,13 @@
 ;; Second, inside an ellip's sub the binder forms are withheld -- a binder
 ;; scoped to one splice iteration abstracts nothing these corpora can use,
 ;; though the matcher and the oracle both handle one fully if a template is
-;; built by hand -- and (svar) is withheld once the sub already has one,
-;; since a duplicate svar can only score identically to its single-svar
-;; parent.
+;; built by hand -- and (svar) is withheld once the sub already has one.
+;; That last choice narrows more than it may look: a second (svar) adds no
+;; SKELETON constraint (later occurrences match anything), but the oracle
+;; can exploit per-element agreement, so on a corpus whose elements repeat
+;; a value, a template like (f (g %xs %xs) ...) beats every single-svar
+;; candidate -- a strictly better macro this search will not propose.  (A
+;; worked corpus: notes/2026-08-18-1800-consolidation-pass.md.)
 (define (expansions tpl g max-arity)
   (define ctx (hole-context tpl))
   (define scope (hole-ctx-scope ctx))
@@ -1229,7 +1243,8 @@
 ;; subterm elsewhere in the corpus is one.  Counting them lets a candidate
 ;; pass this filter with its sub completely unconstrained, free to grow
 ;; through the entire template grammar once per coincidence, and the search
-;; does not finish in practice (notes/2026-08-18-1505 has the measurements).
+;; does not finish in practice (measurements:
+;; notes/2026-08-18-1505-session-2-review-ellipses.md).
 ;; Matching and scoring are untouched -- a finished candidate's
 ;; zero-iteration sites remain perfectly legal at valid-sites time; this
 ;; only sharpens the structural pre-filter, which was already a sound
@@ -1342,8 +1357,11 @@
   (and best (positive? (cdr best)) (car best)))
 
 ;; macro-search : (Listof Sexpr) [Natural] [(Listof MDef)] -> (U Template #f)
-;; The macro template of at most `max-arity` pattern variables that saves the
-;; most on this corpus, or #f if none saves anything.
+;; The macro template of at most `max-arity` pattern variables that saves
+;; the most on this corpus, among the candidates the enumeration proposes --
+;; the search's width choices, recorded at `expansions` and
+;; `skeleton-programs`, mean this is not always the best template the
+;; language admits -- or #f if none saves anything.
 (define (macro-search programs [max-arity 2] [library '()])
   (check-corpus programs)
   (best-candidate library (all-candidates library programs max-arity)
@@ -1353,30 +1371,36 @@
 ;; A well-formedness pass over the corpus, run once before search begins.
 ;; A corpus this module's own position-walkers would misread is worse than
 ;; merely wrong -- it can drive a well-formed candidate into a confusing
-;; error deep in the expander, far from the actual problem.  Three checks,
+;; error deep in the expander, far from the actual problem.  Four checks,
 ;; each naming its offending subterm:
 ;;   * a form whose head is the symbol `lambda` or `let` must actually have
 ;;     that binding form's shape, not merely its head;
 ;;   * a well-shaped lambda's or let's binder position holds a symbol;
+;;   * that symbol is not itself `lambda` or `let` -- a binder is the one
+;;     way this language could shadow them, and a program that does is
+;;     exactly the one the position-walkers misread;
 ;;   * no symbol is spelled with a reserved name: the % prefix belongs to
 ;;     rendered pattern variables (see pvar-name), and the .N suffix (as in
 ;;     `x.1`) is how the expander freshens binders, so a corpus symbol
 ;;     spelled that way could collide with one the expander manufactures
 ;;     and confuse alpha=?'s free-symbol comparison.
 (define (check-corpus programs)
+  (define (check-binder binder form)
+    (unless (symbol? binder)
+      (error 'macro-search "binder position is not a symbol: ~a" form))
+    (when (memq binder '(lambda let))
+      (error 'macro-search "corpus shadows a binding form's name: ~a" form)))
   (define (check-well-formed t)
     (cond
       [(and (pair? t) (eq? (car t) 'lambda))
        (unless (lambda-form? t)
          (error 'macro-search "lambda-headed but not lambda-shaped: ~a" t))
-       (unless (symbol? (car (cadr t)))
-         (error 'macro-search "lambda binder position is not a symbol: ~a" t))
+       (check-binder (car (cadr t)) t)
        (check-well-formed (caddr t))]
       [(and (pair? t) (eq? (car t) 'let))
        (unless (let-form? t)
          (error 'macro-search "let-headed but not let-shaped: ~a" t))
-       (unless (symbol? (car (caadr t)))
-         (error 'macro-search "let binder position is not a symbol: ~a" t))
+       (check-binder (car (caadr t)) t)
        (check-well-formed (cadr (caadr t)))
        (check-well-formed (caddr t))]
       [(list? t) (for-each check-well-formed t)]
@@ -1400,6 +1424,9 @@
     ;; no body at all -- (lambda) is a 1-element form headed by the symbol
     ;; `lambda`, buried here as ((lambda) 1)'s own head
     (check-exn exn:fail? (lambda () (check-corpus '(((lambda) 1)))))
+    ;; a binder named after a binding form: the one way this language could
+    ;; shadow lambda or let, and the position-walkers would misread the body
+    (check-exn exn:fail? (lambda () (check-corpus '((lambda (let) (let ([x 1]) x))))))
     ;; a symbol spelled like the expander's own freshened output
     (check-exn exn:fail? (lambda () (check-corpus '((f x.1 1)))))
     ;; well-formed corpora still pass

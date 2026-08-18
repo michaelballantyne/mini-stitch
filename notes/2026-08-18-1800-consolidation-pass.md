@@ -99,6 +99,52 @@ anyone reading old diffs or notes/2026-08-18-1430:
   plumbing); this session 204s without the plumbing but with the hoisted
   expansions.
 
+## Review cycle 1 (Fable reviewer, same day)
+
+What it verified, so later passes need not repeat the expensive parts:
+every quantitative claim in walkthrough-macros.md and the two benchmark
+headers regenerated from the code (including the 217,200 enumerated
+candidates and exactly 25 oracle survivors, ~3.5 minutes); every expander
+output in the walkthrough reproduced; both benchmarks' cost arithmetic
+re-derived by hand and machine; and the rewrite's positional sequence-args
+equivalence attacked with a walk-recording reference matcher on 14
+hand-built adversarial cases plus 5,000 randomized transcribe-and-match
+trials — zero disagreements (the argument: with at most one ellipsis,
+every form inside the sub is fixed-length, so template and site paths
+align positionally, and svar-path's leftmost order is the walk's visiting
+order).
+
+What it found, all fixed in the same session:
+
+1. **The duplicate-svar withholding was mislabeled as dominance.** The
+   comment said a second (svar) "can only score identically to its
+   single-svar parent" — false.  On the corpus
+   `((f (g 1 1) (g 2 2)) (f (g 3 3) (g 4 4) (g 5 5)))` the excluded
+   template `(f (g %xs %xs) ...)` is oracle-valid at the root of both
+   programs, rewrites the corpus to `((m0 1 2) (m0 3 4 5))`, and scores
+   703, while the search returns `(g %x0 %x0)` at 399: a second svar adds
+   no skeleton constraint, but the oracle can exploit per-element
+   agreement, which no single-svar template reaches (a depth-0 pvar
+   repeats one value across iterations).  The withholding is now
+   documented as a search-width choice; macro-search's purpose statement
+   and the module header no longer suggest the search is optimal over the
+   whole template language.  Whether to lift the restriction (offer a
+   second (svar) production) is future work: it widens the search on
+   every variadic corpus and deserves its own measurement.
+2. **check-corpus now rejects a binder named `lambda` or `let`** — the one
+   way this object language can shadow them, and exactly the malformation
+   the module header warns makes the position-walkers misread a program.
+   Previously such a corpus passed the check and was walked wrongly in
+   silence.
+3. Smaller findings, all applied: the walkthrough gained an H4
+   demonstration and a section on learning a second macro on top of the
+   first (it had claimed to cover every mechanism while showing neither);
+   its remaining development-history narration went; my-when's margin
+   arithmetic was made exact (each site sheds 204 of fixed shape and pays
+   101 for the call, netting 103); note references spell full filenames
+   everywhere; README's macro paragraphs and macro-fuzz's header stopped
+   narrating development order.
+
 ## Vocabulary retired from the code
 
 "V1"/"V2" (design-note shorthand for templates without/with binder-position
