@@ -359,13 +359,11 @@
 ;; other by the caller: that check is the paper's Eq. 8 = Eq. 15.
 (define (rewrite-corpus p programs name)
   (define arity (pattern-arity p))
-  ;; This table is not an optimization bolted onto the dynamic program -- it IS
-  ;; the dynamic program.  The paper's Eq. 15 is stated bottom-up, one verdict
-  ;; per subtree; memoizing the top-down recursion computes the same table in
-  ;; the same asymptotics.  Without it the recursion makes three calls per
-  ;; level (accept descends into the argument once, reject into both children)
-  ;; and is exponential on self-similar programs -- measured: on the term
-  ;; (t t) nested 16 deep, 89 ms with the table, 61 s without.
+  ;; This table is not an optimization bolted onto the dynamic program -- it
+  ;; IS the dynamic program.  The paper's Eq. 15 is stated bottom-up, one
+  ;; verdict per subtree; memoizing the top-down recursion computes the same
+  ;; table.  Without it the recursion is exponential on self-similar programs
+  ;; (accept descends into the argument, reject into both children).
   (define memo (make-hash))
 
   ;; best-cost : Term -> Cost ; the cheapest this subterm can be made
