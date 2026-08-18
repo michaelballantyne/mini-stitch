@@ -88,9 +88,13 @@
 ;;
 ;; A Cost is an integer: 100 per atom (symbols, numbers, booleans, and the
 ;; identifiers a tvar will become), 1 per parenthesized form, 0 per pvar --
-;; parameters are not structure, which is micro.rkt's cost_{alpha=0} choice.
-;; The macro itself is charged for BOTH halves of its rule: the template and
-;; the flat pattern (m x1 ... xk) the library carries.
+;; parameters are not structure.  The macro itself is charged for its
+;; TEMPLATE only, mirroring stitch exactly: stitch's structure penalty is the
+;; invention body at cost_{alpha=0} (ivars hardcoded to 0 in expansion.rs's
+;; local_expansion_utility, whatever the inert cost_ivar config says), and
+;; neither the invention's binder prefix nor its library entry costs
+;; anything.  The pattern (m x1 ... xk) is the binder prefix's analog, so it
+;; is likewise free; arity is paid only where stitch pays it, at each call.
 ;; ---------------------------------------------------------------------------
 
 (require (only-in "expander.rkt" expand))
@@ -270,11 +274,12 @@
       ,(render-template (mdef-template m))]))
 
 ;; macro-cost : Template -> Cost
-;; What the library pays to carry the macro: its template, and its flat
-;; pattern (m x1 ... xk) -- arity made syntactic.
+;; What the library pays to carry the macro: its template, with pattern
+;; variables free.  The flat pattern (m x1 ... xk) costs nothing, just as
+;; stitch charges nothing for an invention's binder prefix or its library
+;; entry -- a parameter is not structure, wherever it is written down.
 (define (macro-cost tpl)
-  (+ (sexpr-cost tpl)
-     (+ 1 (* 100 (add1 (template-arity tpl))))))
+  (sexpr-cost tpl))
 
 (module+ test
   (test-case "templates"
@@ -284,9 +289,9 @@
     (check-true (finished? T))
     (check-equal? (render-template T) '(lambda (%t0) (f %t0 %x0)))
     ;; template cost: 3 forms + lambda,f + two tvars = 3 + 400; the pattern
-    ;; (m %x0) adds 201
+    ;; adds nothing
     (check-equal? (sexpr-cost T) 403)
-    (check-equal? (macro-cost T) 604)
+    (check-equal? (macro-cost T) 403)
     ;; the leftmost hole of (?? (lambda (t0) ??)) is outside the lambda;
     ;; fill it and the next hole sees t0
     (define U `(hole (lambda (,(tvar 0)) hole)))
@@ -438,11 +443,22 @@
 ;; matches in shape and survives the oracle, with its arguments.  `expanded`
 ;; is the program's own expansion under the library, computed once by the
 ;; caller.
+;;
+;; One refusal is a POLICY, not a hygiene fact: an argument may not be the
+;; bare name of a library macro.  The oracle would accept it -- passing a
+;; macro's name for a pattern variable the template drops into head position
+;; is perfectly hygienic -- but a macro parameterized over which macro to
+;; call is a higher-order macro, which this module's standing simplifications
+;; exclude.  (This is the only channel: a macro name buried anywhere else in
+;; an argument makes the expansion fail, and the oracle already refuses
+;; that.)
 (define (valid-sites library name tpl prog expanded)
+  (define macro-names (map mdef-name library))
   (for/fold ([sites (hash)])
             ([pos (in-list (expr-positions prog))])
     (define args (skeleton-match tpl (cdr pos)))
     (if (and args
+             (not (for/or ([a (in-list args)]) (memq (cdr a) macro-names)))
              (site-valid? library name tpl prog expanded (car pos) args))
         (hash-set sites (car pos) args)
         sites)))
@@ -576,9 +592,9 @@
     (define T `(lambda (,(tvar 0)) (f ,(tvar 0) ,(pvar 0))))
     (define-values (rewritten after) (rewrite-corpus '() 'm0 T programs))
     (check-equal? rewritten '((m0 1) (m0 2) (m0 3)))
-    ;; each program went from 503 to 201; the macro costs 403 + 201
+    ;; each program went from 503 to 201; the macro costs its template, 403
     (check-equal? after 603)
-    (check-equal? (macro-utility '() T programs) (- 1509 603 604)))
+    (check-equal? (macro-utility '() T programs) (- 1509 603 403)))
 
   (test-case "the rewriter leaves an oracle-refused site alone"
     ;; the first program's argument would capture; the other two rewrite
@@ -754,21 +770,20 @@
     ;; three programs in the classic (or a b) encoding
     ;;   ((lambda (t) (if t t b)) a)
     ;; with different names for the temporary, different a's and b's, and a
-    ;; second program whose b is a boolean literal.  The winner is the
-    ;; lambda half alone -- (lambda (t) (if t t b)), applied at the use
-    ;; site -- not the whole application: taking the tested expression as a
-    ;; second pattern variable would cost 100 in the pattern plus 100 in
-    ;; every call's name-free slot, while leaving the application outside
-    ;; costs 1 per program.  (Both are enumerated; utility settles it.)
+    ;; second program whose b is a boolean literal.  The whole or-shape wins
+    ;; over its eta-reduced half (the bare lambda, applied at the use site):
+    ;; parameters cost nothing, so absorbing the application saves its form
+    ;; at every use.  (Both are enumerated; utility settles it, 705 to 703.)
     (define programs '(((lambda (t) (if t t (g 2))) (f 1))
                        ((lambda (u) (if u u #f)) (h 3))
                        ((lambda (v) (if v v 9)) k)))
     (define T (macro-search programs))
-    (check-equal? T `(lambda (,(tvar 0)) (if ,(tvar 0) ,(tvar 0) ,(pvar 0))))
-    (check-equal? (macro-utility '() T programs) 502)
+    (check-equal? T `((lambda (,(tvar 0)) (if ,(tvar 0) ,(tvar 0) ,(pvar 0)))
+                      ,(pvar 1)))
+    (check-equal? (macro-utility '() T programs) 705)
     (define-values (rewritten _) (rewrite-corpus '() 'm0 T programs))
     (check-equal? rewritten
-                  '(((m0 (g 2)) (f 1)) ((m0 #f) (h 3)) ((m0 9) k))))
+                  '((m0 (g 2) (f 1)) (m0 #f (h 3)) (m0 9 k))))
 
   (test-case "nothing shared, nothing learned"
     (check-false (macro-search '((f 1) (g 2))))))
@@ -836,5 +851,5 @@
     (check-equal? (length steps) 1)
     (check-equal? (mdef-template (learned-macro (first steps)))
                   `(lambda (,(tvar 0)) (f ,(tvar 0) ,(pvar 0))))
-    (check-equal? (learned-utility (first steps)) 302)
+    (check-equal? (learned-utility (first steps)) 503)
     (check-equal? (learned-programs (first steps)) '((m0 1) (m0 2) (m0 3)))))

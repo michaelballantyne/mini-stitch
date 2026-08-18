@@ -399,11 +399,19 @@ filters, revisit; note the asymmetry rather than inheriting it.
   call is an expression, so binder lists and binding occurrences are never
   match roots.
 - **Utility by rewriting** — `utility(m) = cost(corpus) − cost(rewrite(corpus, m))
-  − cost(m)`, where `cost(m)` covers the template *and* the flat pattern
-  `(m x1 ... xk)` (the pattern is real code the library carries; stitch's
-  arity cost, made syntactic). Cost model: keep micro's constants over
-  RSexpr — 100 per identifier/literal, 1 per form-child edge, pvars cost 0
-  in the template (parameters, not structure), 100 for the new macro name.
+  − cost(m)`, where `cost(m)` is the TEMPLATE's cost only, pvars free.
+  [Corrected 2026-08-18, after Michael flagged it and the stitch source
+  settled it: this note originally also charged the flat pattern
+  `(m x1 ... xk)`, calling it "stitch's arity cost, made syntactic" — but
+  stitch charges an invention nothing per parameter anywhere in the library:
+  its structure penalty is the body at cost_{alpha=0} (`local_expansion_utility`
+  hardcodes IVar to 0; the `cost_ivar = 100` config is inert), and neither
+  the binder prefix nor the library entry is charged. The pattern is the
+  binder prefix's analog, so it is free too; arity is paid only per use, in
+  the call. Charging it distorted the search toward eta-reduced templates.]
+  Cost model: keep micro's constants over RSexpr — 100 per
+  identifier/literal, 1 per form-child edge, pvars cost 0 wherever they
+  stand (parameters, not structure), 100 for the new macro name.
 - **Filters** — >= 2 distinct programs; zero-match pruning (finiteness);
   constant-argument (a pvar receiving the same *closed* argument everywhere
   isn't a parameter — "closed" now means "no refs to binders outside
