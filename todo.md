@@ -121,15 +121,37 @@ means replacing a subexpression by a call that hygienically expands back.
       appears unoccupied; nearest are Macrofication (known-macro reverse
       matching) and resugaring (known sugar); nominal anti-unification is
       the formal vocabulary to borrow.
-- [ ] Adversarial review of V2 + new tests (cut when the 2026-08-18
-      session wrapped early; top of stack — reviewer bait listed in
-      notes/2026-08-18-0557).
+- [x] Adversarial review of V2 + new tests (Opus reviewer; all findings
+      applied — notes/2026-08-18-1430. Headline: narrowing the oracle's
+      error handler surfaced a real expander bug (unguarded binder
+      positions) the blanket handler had been hiding. Also: DP memoized,
+      skeleton shape-judgment tightened, check-corpus made a real
+      well-formedness pass, fuzzer coverage gaps (H2/H3/V2-capture/
+      lambda-args) closed, two proposed filters refuted by measurement.)
+- [x] Ellipses, both stages (design notes/2026-08-18-1324 + amendment;
+      expander: depth-1 trailing ellipses, hygiene-under-iteration
+      tests, spot-checked against Racket's syntax-rules; learner: one
+      (ellip sub) per template with (svar) as its own node — sequence
+      args are ordinary trailing call args, oracle/rewriter/DP
+      unchanged. Learns (m x ...) => (f (g x) ...) across three
+      arities. Finding: zero-iteration matches satisfy structural
+      pruning vacuously and explode the search; pre-filter now requires
+      an iterating witness — see skeleton-programs.)
+- [ ] Fuzzer stage 3: generate ellip templates in the inverse property
+      (design note section 5's last bullet).
+- [ ] The mdef binder mask (review finding 5, documented at
+      expr-children): learned macros should extend the binding spec so
+      iteration-2 corpora are walked correctly instead of leaning on
+      the oracle.
 - [ ] Function-shaped classification (cheap): macros strictly dominate
       functions under the compression objective, so report WHY each
       learned template needed to be a macro; later, learn functions AND
       macros with define/letrec + the for/list-over-map layering
       benchmark. Analysis: notes/2026-08-18-0539.
-- [ ] Later rungs per the notes: ellipses (gates everything about real
-      corpora), literals lists, Racket's own expander as the outermost
-      differential oracle, core-Racket then surface-Racket corpora,
-      definition contexts (B.1/B.2 as adversarial tests).
+- [ ] Combined benchmark: a variadic binder-ful corpus (my-when/begin
+      style bodies under a lambda) exercising V2 and ellipses together.
+- [ ] Later rungs per the notes: literals lists, non-trailing/multiple
+      ellipses (will meet the zero-iteration pruning interaction again),
+      Racket's own expander as the outermost differential oracle,
+      core-Racket then surface-Racket corpora, definition contexts
+      (B.1/B.2 as adversarial tests), recursive macros.
