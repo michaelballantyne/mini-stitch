@@ -60,7 +60,7 @@ expansions takes it whole instead of four positional lists plus a boolean.
 ## The review-finding numbers, decoded
 
 Comments used to cite adversarial-review findings by number. The map, for
-anyone reading old diffs or notes/2026-08-18-1430:
+anyone reading old diffs or notes/2026-08-18-1430-adversarial-review-3.md:
 
 - **F1** — match-binder and check-corpus made total: a raw symbol in a
   hand-built template's binder position is "no match", not a crash; an
@@ -83,12 +83,12 @@ anyone reading old diffs or notes/2026-08-18-1430:
   ellipsis candidate to actually iterate somewhere, a 3-program benchmark
   exploded past 900,000 open candidates by enumeration level 7 (and
   climbing); with the guard, 670 finished candidates, sub-second. First
-  recorded in notes/2026-08-18-1505.
+  recorded in notes/2026-08-18-1505-session-2-review-ellipses.md.
 - **The variadic-family condition on ellipsis productions.** Offering
   ellipsis skeletons whenever the corpus has any two distinct form lengths
   (rather than one head at two lengths) took the for/set benchmark from
   ~5.3 measured minutes to 30+ for candidates that cannot win there. Also
-  in notes/2026-08-18-1505.
+  in notes/2026-08-18-1505-session-2-review-ellipses.md.
 - **The rewrite DP's memo.** Without memoizing best-cost, every descendant
   is visited twice per node (once from accept-cost, once from
   reject-cost) — measured 4x per two nesting levels on self-similar
@@ -141,7 +141,7 @@ What it found, all fixed in the same session:
    first (it had claimed to cover every mechanism while showing neither);
    its remaining development-history narration went; my-when's margin
    arithmetic was made exact (each site sheds 204 of fixed shape and pays
-   101 for the call, netting 103); note references spell full filenames
+   101 for the call, netting 103); note references in code, README, and walkthrough spell full filenames
    everywhere; README's macro paragraphs and macro-fuzz's header stopped
    narrating development order.
 
@@ -156,4 +156,4 @@ order it was built in. The my-when test's header keeps its two
 corpus-design lessons (a recurring identifier or a shared element shape
 lets a template binder reach sites the design meant to reserve for a
 binder-position pattern variable) but no longer narrates the scratch-script
-process that found them; the fuller account is in notes/2026-08-18-1505.
+process that found them; the fuller account is in notes/2026-08-18-1505-session-2-review-ellipses.md.

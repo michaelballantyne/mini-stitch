@@ -158,13 +158,18 @@ deliverables per item). Principle: the macro act has expressiveness without
 act one's three foundations -- a single readable narrative, a trust anchor
 outside the project, and an unbiased evaluation. Those first.
 
-- [ ] Consolidation pass: move comment archaeology (F-numbers, measurement
-      stories, container timings) from macro-micro.rkt and
-      tests/for-set-test.rkt into notes; de-clever skeleton-match's
-      box-parameter and 'seq-args key into an explicit return shape; hoist
-      expand-under out of best-candidate's per-candidate loop; write
-      walkthrough-macros.md (for/set end to end: H1 refusal, H2 refusal,
-      V2 rescue, utility arithmetic, the addendum-C two-coloring).
+- [x] Consolidation pass (notes/2026-08-18-1800-consolidation-pass.md):
+      macro-micro.rkt rewritten for reading -- history moved to notes;
+      skeleton-match's sequence arguments computed positionally instead of
+      via box-and-parameter bookkeeping; hole-scope/hole-ellip-scope merged;
+      shared-sites plumbing dropped and per-program expansions hoisted;
+      walkthrough-macros.md written (for/set end to end with real expander
+      output: H1/H2/H4 refusals, the binder-pvar rescue, the search funnel,
+      utility arithmetic, ellipses, iteration, the two-coloring reading).
+      Two adversarial review cycles (Fable) applied; cycle 1 found the
+      duplicate-svar withholding is not dominance-safe (worked corpus in
+      the consolidation note) and check-corpus now rejects shadowed
+      lambda/let binders; cycle 2 verdict: meets micro.rkt's standard.
 - [ ] Racket's expander as the outer differential oracle: core-Racket
       referent-aware alpha walker + namespace harness; replay the checked-in
       corpora and benchmarks; then model-vs-Racket agreement on every oracle

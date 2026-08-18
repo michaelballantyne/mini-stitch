@@ -28,10 +28,10 @@
 ;; recognizes the SAME template at the root of that site.  This is a
 ;; different fuzzer entirely: no corpus, no search, no cost model -- just
 ;; "does un-transcription invert transcription" -- and that is only true
-;; because of two things this generator does on purpose: it gates a binder-
-;; position pvar's argument-reference against `pscope` (an argument may name
-;; a binder pvar only where that binder's own scope reaches, never outside
-;; it), and `build-args` draws binder-position names WITHOUT replacement.
+;; because of two things this generator does on purpose: an argument may
+;; reference a binder pvar only where that binder's own scope reaches
+;; (`pscope`), never outside it, and `build-args` draws binder-position
+;; names WITHOUT replacement.
 ;; Drop either one and the property goes false in general -- e.g. transcribing
 ;; `(lambda (#0) (lambda (#1) (f #0)))` with args `a a` produces a site whose
 ;; inner binder captures what the template aimed the outer one at, and no
@@ -390,8 +390,8 @@
 
 ;; With this probability, a freshly-generated plain form becomes the
 ;; template's one ellip -- see `gen-template`'s 'plain case below.
-;; ~25%, so most templates stay ellip-free (property 2's original ground)
-;; while a healthy minority exercise the new machinery.
+;; ~25%, so most templates stay ellip-free while a healthy minority
+;; exercise the ellipsis machinery.
 (define ELLIP-DENOM 4) ; 1-in-4 = 25%
 
 ;; contains-svar? : Template -> Boolean
@@ -482,7 +482,8 @@
 ;; `ellip-box`, a shared (Box Boolean) starting #f, is threaded into every
 ;; recursive call so that at most one (ellip sub) is ever generated across
 ;; the WHOLE template (one ellip per template, not merely per form) -- see
-;; the 'plain case, the only place that ever sets it.  When a plain form under construction takes
+;; the 'plain case, the only place that ever sets it.  When a plain form
+;; under construction takes
 ;; that branch, the ellip's own mint-time pscope is recorded in `origin`
 ;; under the reserved key 'ellip-pscope (raw pvar indices, exactly like an
 ;; expr-pvar's own mint-time pscope -- see mint-pvar! -- so build-args can

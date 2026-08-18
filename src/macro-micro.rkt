@@ -80,11 +80,13 @@
 ;; template's free identifiers resolve globally.
 ;;
 ;; Those simplify the LANGUAGE of macros considered.  Separately, the search
-;; does not propose every template that language admits: its productions are
-;; read off the corpus, and the ellipsis productions are narrowed further.
-;; Unlike micro.rkt, whose two prunings provably preserve the optimum, these
-;; width choices can lose a better macro; each one is recorded where it is
-;; made, at `expansions` and `skeleton-programs`.
+;; does not propose every template that language admits.  Reading the
+;; identifier, literal and form-length productions off the corpus preserves
+;; the best answer, by micro.rkt's own argument: a template mentioning
+;; syntax the corpus never exhibits can never match.  The narrowings of the
+;; ELLIPSIS productions are different -- they can lose a better macro, and
+;; each one is recorded where it is made, at `expansions` and
+;; `skeleton-programs`.
 ;;
 ;; DATA DEFINITIONS
 ;;
@@ -1076,8 +1078,8 @@
 ;;              candidates that cannot win; a variadic family spread across
 ;;              DIFFERENT heads is missed -- a search-width choice of the
 ;;              same kind as proposing only corpus-observed lengths.
-;;              (Measurements: notes/2026-08-18-1505-session-2-review-
-;;              ellipses.md.)
+;;              (Measurements:
+;;              notes/2026-08-18-1505-session-2-review-ellipses.md.)
 (struct grammar (syms lits lens binders variadic?) #:transparent)
 
 ;; corpus-grammar : (Listof Sexpr) [(Listof MDef)] -> Grammar
@@ -1529,6 +1531,9 @@
 (struct learned (macro utility programs) #:transparent)
 
 ;; learn-one : (Listof MDef) (Listof Sexpr) Natural -> (U Learned #f)
+;; One whole iteration: find the best macro, rewrite the corpus with it
+;; under a fresh name, and record what happened -- or #f if nothing saves
+;; anything.
 (define (learn-one library programs max-arity)
   (define tpl (macro-search programs max-arity library))
   (cond

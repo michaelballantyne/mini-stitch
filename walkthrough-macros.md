@@ -187,8 +187,10 @@ exactly that.
 **Duplicating an argument (H4).** A pattern variable used twice in a
 template is where compression really pays — and it imposes a condition on
 the site: expansion will produce two copies of *one* argument, so the site's
-two subterms had better mean the same thing. With `m2` defined as
-`(g %x0 %x0)`, the call `(m2 (lambda (a) a))` expands to
+two subterms had better mean the same thing. The for/set template never
+duplicates a pattern variable, so this one needs a small example off to the
+side. With a macro defined as `(g %x0 %x0)`, the call `(m2 (lambda (a) a))`
+expands to
 
 ```racket
 (g (lambda (a.1) a.1) (lambda (a.2) a.2))
@@ -368,11 +370,10 @@ from the identifier productions, since a template that *mentions* a macro
 would be a macro expanding to a macro call, which the standing
 simplifications exclude. And a learned macro extends the object language's
 binding structure: if `m0`'s pattern variable `%x0` had been in binder
-position, then in a corpus call `(m0 x (g x))` the `x` at argument position
-one is a binder's name, not an expression — so `expr-children` masks it
-out of the expression positions exactly as it masks lambda's own binder,
-reading the mask off the library macro's template
-(`template-binder-mask`).
+position, then in a corpus call `(m0 x (g x))` the first argument `x` is a
+binder's name, not an expression — so `expr-children` masks it out of the
+expression positions exactly as it masks lambda's own binder, reading the
+mask off the library macro's template (`template-binder-mask`).
 
 ## 9. Matching, seen through the scope graph
 
