@@ -137,12 +137,15 @@ means replacing a subexpression by a call that hygienically expands back.
       arities. Finding: zero-iteration matches satisfy structural
       pruning vacuously and explode the search; pre-filter now requires
       an iterating witness — see skeleton-programs.)
-- [ ] Fuzzer stage 3: generate ellip templates in the inverse property
-      (design note section 5's last bullet).
-- [ ] The mdef binder mask (review finding 5, documented at
-      expr-children): learned macros should extend the binding spec so
-      iteration-2 corpora are walked correctly instead of leaning on
-      the oracle.
+- [x] Fuzzer stage 3: ellip templates in the inverse property (~33% of
+      trials; its counterexample became N4 of the non-injectivity
+      catalogue, notes/2026-08-18-1541).
+- [x] The binder mask (review finding 5): expr-children/expr-positions/
+      corpus-facts/reject?/rewrite-program now take the library and walk
+      a learned macro's calls correctly -- the head is not an
+      expression, binder-position arguments are excluded like lambda's
+      binder. Mask derived from the template (template-binder-mask), no
+      mdef change.
 - [ ] Function-shaped classification (cheap): macros strictly dominate
       functions under the compression objective, so report WHY each
       learned template needed to be a macro; later, learn functions AND

@@ -182,31 +182,45 @@
 (define (let-form? t)
   (match t [`(let ([,_ ,_]) ,_) #t] [_ #f]))
 
-;; expr-children : Sexpr -> (Listof (cons Path Sexpr))
+;; expr-children : Sexpr [(Listof MDef)] -> (Listof (cons Path Sexpr))
 ;; The immediate subexpressions of an expression, each with its path.  For
 ;; lambda and let this IS the binding spec: only the expression parts are
 ;; contributed, never the binder position.  Any other form contributes every
 ;; element (its head too -- a head is an expression, and `(if ...)`'s head is
-;; where templates learn to say `if`) -- INCLUDING a learned macro's call
-;; `(m1 e1 ... ek)`.  That is honest about lambda and let, but not the whole
-;; story once a library is in play: a learned macro's own binder-position
-;; arguments (which of #0..#(k-1) are binders is recorded in its mdef, per
-;; V2) are NOT in the spec this function reads, so they are walked here as
-;; plain expressions.  A corpus program like `(m0 x (g x))`, where m0's #0 is
-;; a binder, has its `x` at position (1) mis-read as an expression position,
-;; and its spelling enters corpus-facts' identifier list like any other free
-;; reference.  This is harmless today for two reasons that have nothing to do
-;; with this function being right: the oracle (site-valid?) refuses any
-;; rewrite whose skeleton match got a binder wrong, and a bare-symbol
-;; template can never out-cost the site it would replace.  Design note
-;; section 7 flags the proper fix: an mdef binder mask, something that lets
-;; this function (and corpus-facts) walk a learned macro's call correctly
-;; instead of leaning on the oracle to catch a wrong walk after the fact.
-;; Everything that walks programs walks through here.
-(define (expr-children t)
+;; where templates learn to say `if`) -- with one further exception, honest
+;; about a library the same way lambda/let already are: when a form's head is
+;; a symbol naming some macro `m` in the optional `library` argument, the form
+;; is a CALL `(m e1 ... ek)`, not a plain application -- its head is the macro
+;; name, not an expression, and argument position i (element i+1) is a BINDER
+;; occurrence, excluded just like lambda's, exactly when i is one of m's
+;; binder-position pvar indices (`template-binder-mask` of m's template) AND
+;; i is within m's fixed arity (a sequence argument past the arity, from an
+;; ellip template, is always an ordinary expression, never a binder -- the
+;; mask only ever names indices below the arity anyway).  Every other element
+;; is an expression child as usual.  Default `library` is '(), so every
+;; caller that walks a TEMPLATE (never a program with calls in it) or that
+;; predates library-awareness is completely unaffected.  This leaned on the
+;; oracle until the mask landed: before it, a learned macro's binder-position
+;; ARGUMENT in a corpus call -- e.g. the `x` at position (1) of `(m0 x (g
+;; x))`, where m0's #0 is a binder -- was walked here as a plain expression,
+;; harmless only because the oracle refused any rewrite that got a binder
+;; wrong and a bare-symbol template could never out-cost the site anyway.
+;; Everything that walks PROGRAMS threads its library through here now;
+;; everything that walks templates keeps the default.
+(define (expr-children t [library '()])
   (cond [(lambda-form? t) (list (cons '(2) (caddr t)))]
         [(let-form? t) (list (cons '(1 0 1) (cadr (caadr t)))
                              (cons '(2) (caddr t)))]
+        [(and (pair? t) (symbol? (car t))
+              (findf (lambda (m) (eq? (mdef-name m) (car t))) library))
+         => (lambda (m)
+              (define mask (template-binder-mask (mdef-template m)))
+              (define arity (mdef-arity m))
+              (for/list ([e (in-list t)] [j (in-naturals)]
+                         #:unless (or (zero? j)
+                                      (let ([i (sub1 j)])
+                                        (and (< i arity) (memv i mask)))))
+                (cons (list j) e)))]
         [(list? t) (for/list ([e (in-list t)] [i (in-naturals)])
                      (cons (list i) e))]
         [else '()]))
@@ -222,13 +236,16 @@
       (for/list ([e (in-list t)] [i (in-naturals)])
         (if (= i (car path)) (replace-at e (cdr path) new) e))))
 
-;; expr-positions : Sexpr -> (Listof (cons Path Sexpr))
+;; expr-positions : Sexpr [(Listof MDef)] -> (Listof (cons Path Sexpr))
 ;; Every expression position of a program, the whole program first.  These are
-;; the places a macro call could stand.
-(define (expr-positions t)
+;; the places a macro call could stand.  The optional `library`, same default
+;; and same meaning as `expr-children`'s, is threaded straight through so that
+;; a program already containing calls to library macros is walked honestly:
+;; a call's own binder-position arguments are excluded here too.
+(define (expr-positions t [library '()])
   (let walk ([t t] [path '()])
     (cons (cons path t)
-          (append* (for/list ([c (in-list (expr-children t))])
+          (append* (for/list ([c (in-list (expr-children t library))])
                      (walk (cdr c) (append path (car c))))))))
 
 ;; sexpr-cost : (U Sexpr Template) -> Cost
@@ -292,6 +309,35 @@
         [(ellip? t) (template-tvars (ellip-sub t))]
         [(list? t) (apply max 0 (map template-tvars t))]
         [else 0]))
+
+;; template-binder-mask : Template -> (Listof Natural)
+;; The pattern variable indices that occur in BINDER position anywhere in the
+;; template -- V2's own-name binders, lambda's and let's binder slot -- so
+;; that a walker over a CALL to this template's macro can tell a binder
+;; ARGUMENT (the use site's name for that binder) from an ordinary expression
+;; argument.  Derived from the template rather than stored on the mdef: the
+;; mdef struct stays (name arity template), unchanged, since call sites build
+;; mdefs directly (including throughout the tests) and a derived mask can
+;; never drift out of sync with the template it describes.  Walks into an
+;; ellip's sub too, for completeness -- the enumerator does not currently
+;; propose a binder form there (see `expansions`), but the matcher and oracle
+;; both handle one fully if a template is built by hand, so this mask stays
+;; honest about the whole Template grammar rather than only the subset
+;; `expansions` currently offers.
+(define (template-binder-mask t)
+  (cond
+    [(lambda-form? t)
+     (define binder (car (cadr t)))
+     (append (if (pvar? binder) (list (pvar-i binder)) '())
+             (template-binder-mask (caddr t)))]
+    [(let-form? t)
+     (define binder (car (caadr t)))
+     (append (if (pvar? binder) (list (pvar-i binder)) '())
+             (template-binder-mask (cadr (caadr t)))
+             (template-binder-mask (caddr t)))]
+    [(ellip? t) (template-binder-mask (ellip-sub t))]
+    [(list? t) (append-map template-binder-mask t)]
+    [else '()]))
 
 ;; template-has-ellip? : Template -> Boolean
 ;; Does this template already contain its one allowed ellip anywhere?  Used
@@ -809,7 +855,7 @@
 (define (valid-sites library name tpl prog expanded)
   (define macro-names (map mdef-name library))
   (for/fold ([sites (hash)])
-            ([pos (in-list (expr-positions prog))])
+            ([pos (in-list (expr-positions prog library))])
     (define args (skeleton-match tpl (cdr pos)))
     (if (and args
              (not (for/or ([a (in-list args)]) (memq (cdr a) macro-names)))
@@ -874,10 +920,14 @@
 ;; below is memoized, and for the same reason: the memo table IS the dynamic
 ;; program, not an optimization on top of it (see the comment there).
 
-;; rewrite-program : (HashOf Path ...) Symbol Sexpr -> (values Sexpr Cost)
+;; rewrite-program : (HashOf Path ...) Symbol Sexpr [(Listof MDef)]
+;;                   -> (values Sexpr Cost)
 ;; One program rewritten as cheaply as the sites allow, and what the dynamic
-;; program says it now costs.
-(define (rewrite-program sites name prog)
+;; program says it now costs.  `library` (default '()), the macros already in
+;; scope before this one, is threaded into every expr-children call so a
+;; program already containing calls to those macros is walked honestly --
+;; see expr-children.
+(define (rewrite-program sites name prog [library '()])
   ;; This table is not an optimization bolted onto the dynamic program -- it
   ;; IS the dynamic program, exactly as in micro.rkt's rewrite-corpus: the DP
   ;; is stated bottom-up, one verdict per subtree, and memoizing this
@@ -904,7 +954,7 @@
   ;; reject-cost: keep this node; its non-expression parts keep their cost
   (define (reject-cost t path)
     (+ (sexpr-cost t)
-       (for/sum ([c (in-list (expr-children t))])
+       (for/sum ([c (in-list (expr-children t library))])
          (- (best-cost (cdr c) (append path (car c)))
             (sexpr-cost (cdr c))))))
   ;; accept-cost: the call's form, its name, and the arguments at their best
@@ -921,7 +971,7 @@
        (cons name (for/list ([arg (in-list (hash-ref sites path))])
                     (rewrite (cdr arg) (append path (car arg)))))]
       [(list? t)
-       (for/fold ([out t]) ([c (in-list (expr-children t))])
+       (for/fold ([out t]) ([c (in-list (expr-children t library))])
          (replace-at out (car c) (rewrite (cdr c) (append path (car c)))))]
       [else t]))
   (values (rewrite prog '()) (best-cost prog '())))
@@ -949,7 +999,8 @@
                [pc (in-list (or precomputed (make-list (length programs) #f)))])
       (define expanded (if pc (car pc) (expand-under library prog)))
       (define sites (if pc (cdr pc) (valid-sites library name tpl prog expanded)))
-      (define-values (rewritten predicted) (rewrite-program sites name prog))
+      (define-values (rewritten predicted)
+        (rewrite-program sites name prog library))
       (unless (= (sexpr-cost rewritten) predicted)
         (error 'rewrite-corpus "the DP promised cost ~a; rewriting gave ~a"
                predicted (sexpr-cost rewritten)))
@@ -1011,9 +1062,9 @@
 ;; skeleton over-approximates the oracle, so pruning by it is sound; finished
 ;; candidates face the oracle when they are scored.
 
-;; corpus-facts : (Listof Sexpr) -> (values (Listof Symbol) (Listof Sexpr)
-;;                                          (Listof Natural) (Listof Symbol)
-;;                                          Boolean)
+;; corpus-facts : (Listof Sexpr) [(Listof MDef)] -> (values (Listof Symbol)
+;;                                          (Listof Sexpr) (Listof Natural)
+;;                                          (Listof Symbol) Boolean)
 ;; What the corpus offers as productions: the identifiers and literal
 ;; constants that stand anywhere in expression position, the lengths of its
 ;; plain (non-binding) forms, which binding forms appear at all, and whether
@@ -1027,9 +1078,13 @@
 ;; win there.  The family gate can miss a variadic family spread across
 ;; DIFFERENT heads (the head inside the splice, or varying); that is a
 ;; search-width choice of the same kind as proposing only corpus-observed
-;; lengths, recorded here rather than discovered later.
-(define (corpus-facts programs)
-  (define exprs (append-map (lambda (p) (map cdr (expr-positions p))) programs))
+;; lengths, recorded here rather than discovered later.  `library` (default
+;; '()), same meaning as expr-children's, is threaded into expr-positions so
+;; that a corpus already containing calls to those macros never offers a
+;; binder-position argument's spelling as an identifier production.
+(define (corpus-facts programs [library '()])
+  (define exprs
+    (append-map (lambda (p) (map cdr (expr-positions p library))) programs))
   (define plains (for/list ([e (in-list exprs)]
                             #:when (and (list? e)
                                         (not (lambda-form? e))
@@ -1189,8 +1244,11 @@
                                                   binders 1))])
                    (svar? e)))))
 
-;; skeleton-programs : Template (Listof Sexpr) -> (Setof Natural)
-;; Which programs the template skeleton-matches into, anywhere.
+;; skeleton-programs : Template (Listof Sexpr) [(Listof MDef)] -> (Setof Natural)
+;; Which programs the template skeleton-matches into, anywhere.  `library`
+;; (default '()), same meaning as expr-children's, is threaded into
+;; expr-positions so a candidate is never credited with matching at a
+;; binder-position argument of an existing library macro's call.
 ;;
 ;; STAGE 2 NECESSITY, discovered while measuring junk-width (not merely a
 ;; quality preference -- the search does not finish in practice without it):
@@ -1219,16 +1277,16 @@
 ;; docstring already calls it "a sound over-approximation, used to prune");
 ;; for a template with NO ellip, `has-ellip?` is #f and this is exactly the
 ;; pre-ellipsis check, unchanged.
-(define (skeleton-programs tpl programs)
+(define (skeleton-programs tpl programs [library '()])
   (define has-ellip? (template-has-ellip? tpl))
   (define arity (template-arity tpl))
   (for/set ([p (in-list programs)] [k (in-naturals)]
-            #:when (for/or ([pos (in-list (expr-positions p))])
+            #:when (for/or ([pos (in-list (expr-positions p library))])
                      (define args (skeleton-match tpl (cdr pos)))
                      (and args (or (not has-ellip?) (> (length args) arity)))))
     k))
 
-;; reject? : Template (Listof Sexpr) -> Boolean
+;; reject? : Template (Listof Sexpr) [(Listof MDef)] -> Boolean
 ;; Should this candidate be dropped rather than grown or scored?  A bare
 ;; pattern variable is the identity macro; a template whose SHAPE already
 ;; fails to appear in two programs can never come back (children only
@@ -1261,17 +1319,20 @@
 ;; always matches a superset of sites (a tvar binder never needs a site's
 ;; argument to name anything usable) and saves 100 more per extra site
 ;; besides, so search never prefers it.
-(define (reject? tpl programs)
+(define (reject? tpl programs [library '()])
   (or (pvar? tpl)
-      (< (set-count (skeleton-programs tpl programs)) 2)))
+      (< (set-count (skeleton-programs tpl programs library)) 2)))
 
 ;; all-candidates : (Listof MDef) (Listof Sexpr) Natural -> (Listof Template)
 ;; Every finished candidate the enumeration reaches, level by level from the
 ;; single hole.  Learned macro names are withheld from the identifier
 ;; productions: a template that mentions one is a macro expanding to a macro
-;; call, which this module does not do yet.
+;; call, which this module does not do yet.  `library` is threaded into
+;; corpus-facts and reject? so a corpus already containing calls to those
+;; macros is walked honestly throughout candidate enumeration too.
 (define (all-candidates library programs max-arity)
-  (define-values (syms lits lens binders variadic?) (corpus-facts programs))
+  (define-values (syms lits lens binders variadic?)
+    (corpus-facts programs library))
   (define fresh-syms
     (remove* (map mdef-name library) syms))
   (let level ([frontier (list 'hole)] [found '()])
@@ -1283,7 +1344,7 @@
                      [piece (in-list (expansions tpl fresh-syms lits lens
                                                  binders max-arity variadic?))]
                      [child (in-value (fill-hole tpl piece))]
-                     #:unless (reject? child programs))
+                     #:unless (reject? child programs library))
            child))
        (define-values (done rest) (partition finished? children))
        ;; Stage 2 wrinkle: finished? no longer follows from "no hole left".
@@ -1628,6 +1689,58 @@
     (check-equal? name 'm1)
     (define-values (rewritten _) (rewrite-corpus library name T programs))
     (check-equal? rewritten '((m1 (m0 1)) (m1 (m0 2)) (m1 (m0 3)))))
+
+  (test-case "a V2 macro's binder-position argument is not an expression"
+    ;; the gap this test closes (adversarial review finding 5 / design note
+    ;; section 7): m0's pattern variable #0 is a BINDER (V2), so a corpus
+    ;; call like (m0 x (g x)) has its own `x` -- the binder-position
+    ;; argument at path (1) -- masked out of expr-children/expr-positions
+    ;; the same way lambda's and let's binder slots always have been.
+    (define m0 (mdef 'm0 2 `(lambda (,(pvar 0)) (f ,(pvar 0) ,(pvar 1)))))
+    (define library (list m0))
+    (define programs '((m0 x (g x)) (m0 y (h y))))
+    ;; (a) with the library, path (1) is gone; the OTHER argument (path (2))
+    ;; and its own children -- including (2 1), the `x` INSIDE (g x) -- are
+    ;; still ordinary expression positions, exactly as any other plain form
+    (check-equal? (map car (expr-positions (first programs) library))
+                  '(() (2) (2 0) (2 1)))
+    ;; without a library (the default), nothing is masked: the binder
+    ;; argument at (1) is walked as a plain expression, and so is the
+    ;; macro's own NAME at (0) -- this is the old, gap-having behavior
+    (check-equal? (map car (expr-positions (first programs)))
+                  '(() (0) (1) (2) (2 0) (2 1)))
+    ;; (b) corpus-facts: 'm0' -- the macro's own name, previously walked as
+    ;; an ordinary head symbol -- no longer leaks into the identifier
+    ;; productions once the library is threaded through. `x` and `y`,
+    ;; though, are NOT purely binder spellings in THIS corpus: each recurs
+    ;; as an ordinary free reference inside its call's second argument, (g
+    ;; x) / (h y) (the same V2 "rescue" shape exercised in the oracle test
+    ;; above), and that occurrence at (2 1) is a genuine expression position
+    ;; the mask does not touch -- so x and y correctly still appear; only
+    ;; m0 is gone. (Surprising on first read of the design note's example,
+    ;; but right: the mask excludes one PATH, not a symbol everywhere it's
+    ;; spelled -- exactly what H3's "binder names are irrelevant, but a
+    ;; body may still legally spell one" already implies elsewhere in this
+    ;; file.)
+    (define-values (syms _lits _lens _binders _variadic?)
+      (corpus-facts programs library))
+    (check-equal? syms '(g h x y))
+    (define-values (syms0 _lits0 _lens0 _binders0 _variadic0?)
+      (corpus-facts programs))
+    (check-equal? syms0 '(g h m0 x y))
+    ;; a corpus where the binder argument has no OTHER occurrence shows the
+    ;; mask's effect on corpus-facts cleanly: x and y vanish entirely
+    (define-values (syms2 _lits2 _lens2 _binders2 _variadic2?)
+      (corpus-facts '((m0 x (g 1)) (m0 y (h 2))) library))
+    (check-equal? syms2 '(g h))
+    ;; (c) a search over this corpus, with the library, still runs
+    ;; end-to-end: with only two programs and nothing left for a
+    ;; macro-call-free template to share beyond what m0 already absorbed
+    ;; (each call's second argument has a different head, g vs h), nothing
+    ;; saves anything -- #f, hand-checked against corpus-facts above (no
+    ;; shared symbol or length across both calls' second arguments once m0
+    ;; itself is off limits)
+    (check-false (macro-search programs 2 library)))
 
   (test-case "macro-compress stops when nothing is left to learn"
     ;; iteration 1 collapses each program to a call; iteration 2 finds the
