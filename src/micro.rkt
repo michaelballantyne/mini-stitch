@@ -153,9 +153,9 @@
   (test-case "the cost of a term"
     (define A (prim 'a))
     (define B (prim 'b))
-    ;; (a a a) is ((a a) a): two apps and three prims.  Real stitch reports
-    ;; original_cost 604 for the two-program corpus below.
+    ;; (a a a) is ((a a) a): two apps and three prims. 
     (check-equal? (term-cost (app (app A A) A)) 302)
+    ;; real stitch reports original_cost 604 for this two-program corpus
     (check-equal? (corpus-cost (list (app (app A A) A) (app (app B B) B))) 604)
     ;; abstraction variables are free of charge, so (#0 #0 #0) costs two apps
     (check-equal? (term-cost (app (app (ivar 0) (ivar 0)) (ivar 0))) 2)))
