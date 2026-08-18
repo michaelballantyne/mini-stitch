@@ -71,14 +71,16 @@ tests/fuzz.rkt      deterministic seeded fuzzer: mini's claimed utility
 tests/macro-fuzz.rkt     the macro learner's fuzzer: random corpora through
                     the learner's internal asserts, plus the inverse
                     property (un-transcription inverts transcription)
-tests/for-set-test.rkt   the north-star benchmark: recover the for/set
-                    macro from expanded folds (~5 minutes, run knowingly)
+tests/for-set-test.rkt   the main macro benchmark: recover the for/set
+                    macro from expanded folds (several minutes, run knowingly)
 tests/my-when-test.rkt   binder-position pattern variables and ellipses in
                     one learned macro
 notes/              design notes, a digest of the paper, a map of the Rust
                     implementation, and the write-up of a bug found in stitch
 stitch/             git submodule: the real stitch implementation
 walkthrough.md      the worked example: micro first, then mini
+walkthrough-macros.md    the macro learner's worked example: for/set traced
+                    end to end, with real expander output at every step
 todo.md             the plan
 ```
 
@@ -106,7 +108,7 @@ Run the whole test suite (unit tests plus the differential comparison):
 raco test src/ tests/
 ```
 
-(That now includes the macro learner's for/set benchmark, which is ~5
+(That now includes the macro learner's for/set benchmark, which is several
 minutes of deliberately naive search; everything else finishes in seconds.)
 
 The differential tests need the real binary. If the submodule is not checked out
@@ -151,6 +153,10 @@ is checked by actually running the model expander (`src/expander.rkt`, the
 appendix implementation from the pearl *Hygienic macro expansion
 explained*, Ballantyne & Rosenblatt) — hygiene-by-expansion, the twin of
 utility-by-rewriting.
+
+**Start with [`walkthrough-macros.md`](walkthrough-macros.md)**, which
+traces the for/set benchmark end to end with real expander output at every
+step.
 
 What it learns, on the checked-in benchmarks: the paper's `for/set`
 comprehension from four expanded folds (a template binder, a
