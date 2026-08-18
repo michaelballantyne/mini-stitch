@@ -1012,27 +1012,45 @@
 ;; candidates face the oracle when they are scored.
 
 ;; corpus-facts : (Listof Sexpr) -> (values (Listof Symbol) (Listof Sexpr)
-;;                                          (Listof Natural) (Listof Symbol))
+;;                                          (Listof Natural) (Listof Symbol)
+;;                                          Boolean)
 ;; What the corpus offers as productions: the identifiers and literal
 ;; constants that stand anywhere in expression position, the lengths of its
-;; plain (non-binding) forms, and which binding forms appear at all.
+;; plain (non-binding) forms, which binding forms appear at all, and whether
+;; any plain-form FAMILY is variadic -- some head symbol standing at two
+;; distinct lengths.  The last is the ellipsis gate: an ellipsis abstracts
+;; over arity, so it is offered only where the corpus shows the same head at
+;; different arities.  The coarser gate ("any two distinct lengths anywhere")
+;; opens on essentially every realistic corpus -- the for/set benchmark has
+;; forms of four lengths, all under different heads -- and was measured to
+;; multiply its search time by more than 6x for candidates that can never
+;; win there.  The family gate can miss a variadic family spread across
+;; DIFFERENT heads (the head inside the splice, or varying); that is a
+;; search-width choice of the same kind as proposing only corpus-observed
+;; lengths, recorded here rather than discovered later.
 (define (corpus-facts programs)
   (define exprs (append-map (lambda (p) (map cdr (expr-positions p))) programs))
+  (define plains (for/list ([e (in-list exprs)]
+                            #:when (and (list? e)
+                                        (not (lambda-form? e))
+                                        (not (let-form? e))))
+                   e))
+  (define lengths-by-head
+    (for/fold ([acc (hash)])
+              ([e (in-list plains)] #:when (and (pair? e) (symbol? (car e))))
+      (hash-update acc (car e) (lambda (s) (set-add s (length e))) (set))))
   (values (sort (set->list (for/set ([e (in-list exprs)] #:when (symbol? e)) e))
                 symbol<?)
           (set->list (for/set ([e (in-list exprs)]
                                #:when (or (number? e) (boolean? e)))
                        e))
-          (sort (set->list (for/set ([e (in-list exprs)]
-                                     #:when (and (list? e)
-                                                 (not (lambda-form? e))
-                                                 (not (let-form? e))))
-                             (length e)))
-                <)
+          (sort (set->list (for/set ([e (in-list plains)]) (length e))) <)
           (for/list ([shape (list lambda-form? let-form?)]
                      [name '(lambda let)]
                      #:when (for/or ([e (in-list exprs)]) (shape e)))
-            name)))
+            name)
+          (for/or ([(_ ls) (in-hash lengths-by-head)])
+            (>= (set-count ls) 2))))
 
 ;; expansions : Template ... Natural -> (Listof Template)
 ;; Every production this grammar allows in the leftmost hole: a plain form of
@@ -1054,11 +1072,11 @@
 ;;    "head" is itself part of the splice) -- pure junk width by a search-
 ;;    width choice, not a semantic one (nothing about matching or the
 ;;    expander forbids p=0; it is simply never worth the oracle calls it
-;;    would cost). These are gated by corpus-facts' own `lens`: only offered
-;;    when the corpus exhibits at least two DISTINCT plain-form lengths (the
-;;    design note's coarsest useful gate) -- on a corpus of uniformly n-ary
-;;    forms, any ellip candidate here is either shape-rejected immediately or
-;;    degenerates to matching exactly one arity, all for a guaranteed loss
+;;    would cost). These are gated by corpus-facts' `variadic?`: only offered
+;;    when some plain-form FAMILY (same head symbol) stands at two distinct
+;;    lengths -- the design note's coarser any-two-lengths gate was measured
+;;    to slow the for/set benchmark (four lengths, all under different
+;;    heads, no ellipsis winner possible) by more than 6x, see corpus-facts
 ;;    -- and by `template-has-ellip?`: at most one ellip per TEMPLATE (the
 ;;    session lead's amendment), so once one exists anywhere in `tpl` no
 ;;    second one is ever offered, here or in the ellip-context branch below.
@@ -1075,7 +1093,7 @@
 ;;    offering it once it is already present would only grow needless
 ;;    duplicate-svar candidates the oracle would score identically to their
 ;;    single-svar parent.
-(define (expansions tpl syms lits lens binders max-arity)
+(define (expansions tpl syms lits lens binders max-arity [variadic? #f])
   (define scope (hole-scope tpl))
   (define arity (template-arity tpl))
   (define next (template-tvars tpl))
@@ -1094,7 +1112,7 @@
   (define plain-form-productions
     (for/list ([n (in-list lens)]) (make-list n 'hole)))
   (define ellip-form-productions
-    (if (or in-ellip? (template-has-ellip? tpl) (< (length lens) 2))
+    (if (or in-ellip? (template-has-ellip? tpl) (not variadic?))
         '()
         (for/list ([p (in-range 1 (apply max lens))])
           (append (make-list p 'hole) (list (ellip 'hole))))))
@@ -1124,19 +1142,32 @@
 (module+ test
   (test-case "corpus facts and expansions"
     (define programs '((lambda (x) (f x 1)) (if a (g b) #t)))
-    (define-values (syms lits lens binders) (corpus-facts programs))
+    (define-values (syms lits lens binders variadic?) (corpus-facts programs))
     (check-equal? syms '(a b f g if x))       ; x: it stands in expr position
     (check-equal? (sort lits (lambda (a b) (string<? (format "~a" a)
                                                      (format "~a" b))))
                   '(#t 1))
     (check-equal? lens '(2 3 4))              ; (g b), (f x 1), (if ...)
     (check-equal? binders '(lambda))
+    ;; three distinct lengths, but under three different HEADS (g, f, if) --
+    ;; no family is variadic, so the ellipsis gate stays closed
+    (check-false variadic?)
+    ;; ... and opens exactly when one head shows two arities
+    (let-values ([(_s _l _n _b v?) (corpus-facts '((f 1) (f 1 2)))])
+      (check-true v?))
     ;; at the top of a fresh template: no tvar references are in scope, and
     ;; the lambda binder position offers both an anonymous tvar and (V2) the
-    ;; one pvar index available at arity 0.  lens has three distinct lengths
-    ;; (>= 2), so the gate opens: prefix lengths p = 1, 2, 3 (max lens - 1 =
-    ;; 3), each an ellip-headed skeleton (hole * p, (ellip hole))
-    (check-equal? (expansions 'hole syms lits lens binders 1)
+    ;; one pvar index available at arity 0.  variadic? is #f here, so no
+    ;; ellip-headed skeletons are offered
+    (check-equal? (expansions 'hole syms lits lens binders 1 variadic?)
+                  (append '((hole hole) (hole hole hole)
+                            (hole hole hole hole))
+                          (list `(lambda (,(tvar 0)) hole)
+                                `(lambda (,(pvar 0)) hole))
+                          syms lits (list (pvar 0))))
+    ;; with the gate open, the ellip-headed skeletons appear after the plain
+    ;; ones: prefix lengths p = 1, 2, 3 (max lens - 1 = 3)
+    (check-equal? (expansions 'hole syms lits lens binders 1 #t)
                   (append '((hole hole) (hole hole hole)
                             (hole hole hole hole))
                           (list (list 'hole (ellip 'hole))
@@ -1240,7 +1271,7 @@
 ;; productions: a template that mentions one is a macro expanding to a macro
 ;; call, which this module does not do yet.
 (define (all-candidates library programs max-arity)
-  (define-values (syms lits lens binders) (corpus-facts programs))
+  (define-values (syms lits lens binders variadic?) (corpus-facts programs))
   (define fresh-syms
     (remove* (map mdef-name library) syms))
   (let level ([frontier (list 'hole)] [found '()])
@@ -1250,7 +1281,7 @@
        (define children
          (for*/list ([tpl (in-list frontier)]
                      [piece (in-list (expansions tpl fresh-syms lits lens
-                                                 binders max-arity))]
+                                                 binders max-arity variadic?))]
                      [child (in-value (fill-hole tpl piece))]
                      #:unless (reject? child programs))
            child))
@@ -1442,6 +1473,30 @@
     (check-equal? (valid-sites '() 'm T site (expand-under '() site))
                   (hash '() (list (cons '(2 1 0) 'elem)
                                   (cons '(2 2 2) '(add elem q))))))
+
+  (test-case "a template binder inside an ellipsis recovers per-copy temporaries"
+    ;; Michael's question (2026-08-18): a macro that introduces a temporary
+    ;; must match a DIFFERENTLY-named binding at each place its expansion
+    ;; put one -- and iterated expansion (here: one ellipsis; someday:
+    ;; recursion) freshens every copy, so the site's temporaries may all be
+    ;; spelled differently FROM EACH OTHER too.  Template binders being
+    ;; anonymous tags is what makes this free: the one tvar below recovers
+    ;; a, b, and c at once.  (The enumerator does not currently PROPOSE
+    ;; binder forms inside an ellip's sub -- a search-width choice noted at
+    ;; expansions -- but matching and the oracle handle them fully.)
+    (define T `(f ,(ellip `(lambda (,(tvar 0)) (g ,(tvar 0) ,(svar))))))
+    (define site '(f (lambda (a) (g a 1))
+                     (lambda (b) (g b 2))
+                     (lambda (c) (g c 3))))
+    (check-equal? (valid-sites '() 'm T site (expand-under '() site))
+                  (hash '() (list (cons '(1 2 2) 1)
+                                  (cons '(2 2 2) 2)
+                                  (cons '(3 2 2) 3))))
+    ;; ... and H1 is still per-copy: an element whose sequence argument
+    ;; mentions its own matched binder cannot be un-transcribed
+    (define bad '(f (lambda (a) (g a (h a))) (lambda (b) (g b 2))))
+    (check-equal? (valid-sites '() 'm T bad (expand-under '() bad))
+                  (hash)))
 
   (test-case "nothing shared, nothing learned"
     (check-false (macro-search '((f 1) (g 2))))))
