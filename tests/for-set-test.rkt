@@ -1,7 +1,7 @@
 #lang racket
 
 ;; ---------------------------------------------------------------------------
-;; tests/for-set-test.rkt --- the north-star benchmark: learning for/set
+;; tests/for-set-test.rkt --- the main benchmark: learning for/set
 ;; ---------------------------------------------------------------------------
 ;;
 ;; notes/2026-08-18-0323-syntax-rules-learning-design.md, addendum F, names
@@ -17,18 +17,17 @@
 ;;   (sequence-fold (lambda (v) (lambda (elem) (set-add v body))) (set) seq)
 ;; so this is the corpus: four hand-written expansions of that shape, varying
 ;; the accumulator/iteration-variable names, the body, and the sequence.
-;; Every body mentions its own iteration variable, so the V1 template OF THIS
-;; SHAPE -- a template binder in BOTH lambda positions, i.e. for/set itself --
-;; is H1-blocked at every site: no V1 template can recover for/set itself.
-;; (This is narrower than "no V1 template rewrites any site here": a
-;; differently shaped, less-abstracting V1 template CAN still match --
-;; `(sequence-fold ,pvar (set) ,pvar)`, swallowing each whole curried fold
-;; opaquely into one pattern variable with no binder position at all, rewrites
-;; every site and scores utility 202. It just is not for/set: it abstracts
-;; the fold, not the loop.) V2's binder-position pattern variable is what
-;; lets the search reach the for/set shape specifically. The fourth program
-;; is the H2 exercise: it locally shadows set-add, so the learned macro --
-;; whose set-add is the global -- must refuse that site outright.
+;; Every body mentions its own iteration variable, so this shape with
+;; template binders in BOTH lambda positions -- for/set itself, but with no
+;; way to take the iteration variable's name from the site -- is blocked by
+;; H1 at every site.  (Narrower templates without binder positions can still
+;; match: `(sequence-fold ,pvar (set) ,pvar)` swallows each whole curried
+;; fold opaquely into one pattern variable, rewrites every site, and scores
+;; utility 202.  It just is not for/set: it abstracts the fold, not the
+;; loop.)  A binder-position pattern variable is what lets the search reach
+;; the for/set shape specifically.  The fourth program is the H2 exercise:
+;; it locally shadows set-add, so the learned macro -- whose set-add is the
+;; global -- must refuse that site outright.
 ;;
 ;;   raco test tests/for-set-test.rkt
 ;; ---------------------------------------------------------------------------
@@ -47,12 +46,11 @@
 ;; the target: the accumulator is a template binder (#0's uses are all tvar
 ;; 0), the iteration variable is a binder-position pvar (#0 the pattern
 ;; variable, unrelated numbering -- pvar and tvar indices are separate
-;; namespaces), the body is pvar #1, the sequence is pvar #2.
-;; NOTE for a future "unreferenced binder pvar" cleanup: %x0 (the binder
-;; pvar, the iteration variable) is deliberately unreferenced IN THE TEMPLATE
-;; -- its only reference lives in the argument each site supplies for %x1
-;; (e.g. `(+ x n)` at p1) -- do not treat that as dead and delete it; it is
-;; this benchmark's whole answer.
+;; namespaces), the body is pvar #1, the sequence is pvar #2.  Note that the
+;; binder pvar %x0 has no other occurrence in the template: its references
+;; live in the argument each site supplies for %x1 (e.g. `(+ x n)` at p1).
+;; That is not dead weight -- it is the answer (see reject? in
+;; macro-micro.rkt on why no filter may remove such a template).
 (define target
   `(sequence-fold (lambda (,(tvar 0))
                     (lambda (,(pvar 0)) (set-add ,(tvar 0) ,(pvar 1))))
@@ -60,25 +58,9 @@
 
 (module+ test
   (test-case "macro-search recovers for/set"
-    ;; measured wall time on this corpus (arity 3, all four programs,
-    ;; including the H2-shadowed one): originally about 245 seconds on the
-    ;; session's own container. [Updated 2026-08-18, adversarial-review
-    ;; session, F15] best-candidate used to compute valid-sites for the
-    ;; >=2-programs filter and then macro-utility -> rewrite-corpus
-    ;; recomputed it all from scratch for every surviving candidate; F15
-    ;; makes best-candidate compute each candidate's per-program (expanded .
-    ;; sites) once and pass it through. Measured back-to-back in THIS
-    ;; session's (evidently slower) container: pre-F15 5m58.6s (358.6s),
-    ;; post-F15 5m19.6s (319.6s) -- a real but modest ~11% reduction here,
-    ;; short of a full halving, because only the candidates that actually
-    ;; clear the >=2-valid-oracle-programs filter were ever double-computed,
-    ;; and on this corpus that is a minority of the ~25 skeleton-surviving
-    ;; candidates. (The absolute number is container-dependent -- do not
-    ;; compare 245s and 319.6s directly, they are different machines; compare
-    ;; 358.6s to 319.6s, measured together.) Comfortably inside the ~10-minute
-    ;; budget either way, so the corpus is kept whole -- no cutting was
-    ;; needed. (macro-search enumerates naively and calls the model expander
-    ;; per (candidate, site); this is the expected genre of slow.)
+    ;; several minutes of deliberately naive search: the model expander runs
+    ;; at every (candidate, site) pair.  Run knowingly.  (Timings across
+    ;; sessions: notes/2026-08-18-1800-consolidation-pass.md.)
     (check-equal? (macro-search programs 3) target))
 
   (test-case "rewrite-corpus turns the matching sites into calls, and skips the shadowed one"
