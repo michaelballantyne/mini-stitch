@@ -1,3 +1,7 @@
 .DS_Store
 stitch.pdf
 compiled/
+
+# racket bytecode and python caches in experiments/
+compiled/
+__pycache__/

@@ -1,0 +1,136 @@
+corpus,mode,max-arity,status,pops-expanded,pushed,considered,finished,utility,wall-ms,body
+cex,best,2,ok,48,48,148,8,1819,0.8,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+cex,fifo,2,ok,48,48,148,8,1819,0.5,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+cex,lifo,2,ok,48,48,148,8,1819,0.6,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+ctx_thread_1,best,2,ok,346,347,594,98,1011,3.3,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_1,fifo,2,ok,347,347,596,100,1011,3,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_1,lifo,2,ok,346,347,594,98,1011,2.9,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_2,best,2,ok,233,234,413,69,910,2,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_2,fifo,2,ok,234,234,415,71,910,2.1,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_2,lifo,2,ok,233,234,413,69,910,2,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_twice,best,2,ok,410,412,683,103,1213,3.9,(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))
+ctx_thread_twice,fifo,2,ok,412,412,686,106,1213,3.7,(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))
+ctx_thread_twice,lifo,2,ok,411,412,684,104,1213,3.6,(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))
+hof,best,2,ok,305,306,513,65,2320,3.6,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+hof,fifo,2,ok,328,328,550,72,2320,3.5,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+hof,lifo,2,ok,328,328,550,72,2320,3.6,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+identical,best,2,ok,6,6,23,2,304,0.2,(a b c d e)
+identical,fifo,2,ok,6,6,23,2,304,0.1,(a b c d e)
+identical,lifo,2,ok,6,6,23,2,304,0.2,(a b c d e)
+issue108,best,2,none,1,1,7,0,,0.1,
+issue108,fifo,2,none,1,1,7,0,,0.1,
+issue108,lifo,2,none,1,1,7,0,,0.1,
+issue108_2,best,2,none,1,1,14,0,,0.1,
+issue108_2,fifo,2,none,1,1,14,0,,0.1,
+issue108_2,lifo,2,none,1,1,14,0,,0.1,
+lio_test1,best,2,ok,7335,7343,10897,171,14745,159.1,(C (T (T (T (C (r_s 12 5) (T (repeat (T r (M 0.84375 0 0 0)) 2 (M 1 0 4.875 0)) (M 1 0 -2.4375 -0))) (M 1 0 0 #1)) (M 1 0 -0 0)) (M 1 0 0 1.25)) (T (r_s 14.5 7.5) (M 1 0 0 #0)))
+lio_test1,fifo,2,ok,8255,8255,12417,195,14745,164.6,(C (T (T (T (C (r_s 12 5) (T (repeat (T r (M 0.84375 0 0 0)) 2 (M 1 0 4.875 0)) (M 1 0 -2.4375 -0))) (M 1 0 0 #1)) (M 1 0 -0 0)) (M 1 0 0 1.25)) (T (r_s 14.5 7.5) (M 1 0 0 #0)))
+lio_test1,lifo,2,ok,7855,7855,11700,189,14745,267.2,(C (T (T (T (C (r_s 12 5) (T (repeat (T r (M 0.84375 0 0 0)) 2 (M 1 0 4.875 0)) (M 1 0 -2.4375 -0))) (M 1 0 0 #1)) (M 1 0 -0 0)) (M 1 0 0 1.25)) (T (r_s 14.5 7.5) (M 1 0 0 #0)))
+lio_test2,best,2,none,1,1,30,0,,0.3,
+lio_test2,fifo,2,none,1,1,30,0,,0.2,
+lio_test2,lifo,2,none,1,1,30,0,,0.2,
+map,best,2,ok,997,999,1520,105,505,10.3,(app (app (app if (app is_nil #0)) nil))
+map,fifo,2,ok,999,999,1524,109,505,10.5,(app (app (app if (app is_nil #0)) nil))
+map,lifo,2,ok,999,999,1524,109,505,9.5,(app (app (app if (app is_nil #0)) nil))
+map2,best,2,ok,373,375,668,70,604,3.8,(if (nil? #0) nil (cons #1 (r (cdr #0))))
+map2,fifo,2,ok,375,375,672,74,604,3.2,(if (nil? #0) nil (cons #1 (r (cdr #0))))
+map2,lifo,2,ok,375,375,672,74,604,3.7,(if (nil? #0) nil (cons #1 (r (cdr #0))))
+map_minimal,best,2,ok,192,193,365,42,504,2.2,(app (app cons #1) (app rec (app cdr #0)))
+map_minimal,fifo,2,ok,193,193,367,44,504,1.9,(app (app cons #1) (app rec (app cdr #0)))
+map_minimal,lifo,2,ok,193,193,367,44,504,2,(app (app cons #1) (app rec (app cdr #0)))
+safe_ctx_thread_bug,best,2,ok,133,134,253,48,406,1.1,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+safe_ctx_thread_bug,fifo,2,ok,136,136,259,51,406,1.2,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+safe_ctx_thread_bug,lifo,2,ok,136,136,259,51,406,1,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+simple1,best,2,ok,6,6,24,5,200,0.1,(#0 #0 #0)
+simple1,fifo,2,ok,6,6,24,5,200,0.1,(#0 #0 #0)
+simple1,lifo,2,ok,6,6,24,5,200,0.1,(#0 #0 #0)
+simple2,best,2,ok,12,12,42,9,201,0.2,(#0 (lam (#0 #0)))
+simple2,fifo,2,ok,12,12,42,9,201,0.2,(#0 (lam (#0 #0)))
+simple2,lifo,2,ok,12,12,42,9,201,0.2,(#0 (lam (#0 #0)))
+simple_hof,best,2,ok,34,34,91,14,201,0.4,(#0 #0)
+simple_hof,fifo,2,ok,34,34,91,14,201,0.3,(#0 #0)
+simple_hof,lifo,2,ok,34,34,91,14,201,0.4,(#0 #0)
+symbol_weighting_test_1,best,2,ok,16,16,64,4,506,0.3,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_1,fifo,2,ok,16,16,64,4,506,0.3,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_1,lifo,2,ok,16,16,64,4,506,0.3,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_2,best,2,ok,16,16,73,4,607,0.3,(* (/ 5 6) (& L1 L2 L3))
+symbol_weighting_test_2,fifo,2,ok,16,16,73,4,607,0.3,(* (/ 5 6) (& L1 L2 L3))
+symbol_weighting_test_2,lifo,2,ok,16,16,73,4,607,0.3,(* (/ 5 6) (& L1 L2 L3))
+tmp_crash,best,2,none,23,23,63,16,,0.4,
+tmp_crash,fifo,2,none,23,23,63,16,,0.3,
+tmp_crash,lifo,2,none,23,23,63,16,,0.3,
+tmp_minimal,best,2,none,1,1,12,0,,0.1,
+tmp_minimal,fifo,2,none,1,1,12,0,,0.1,
+tmp_minimal,lifo,2,none,1,1,12,0,,0.2,
+nuts-bolts,best,2,ok,2520,2629,4076,68,837792,463.7,(T (repeat (T l (M 1 0 -0.5 (/ 0.5 (tan (/ pi #1))))) #1 (M 1 (/ (* 2 pi) #1) 0 0)) (M #0 0 0 0))
+nuts-bolts,fifo,2,ok,4404,4440,6686,110,837792,694.5,(T (repeat (T l (M 1 0 -0.5 (/ 0.5 (tan (/ pi #1))))) #1 (M 1 (/ (* 2 pi) #1) 0 0)) (M #0 0 0 0))
+nuts-bolts,lifo,2,ok,3136,3138,4803,70,837792,511.3,(T (repeat (T l (M 1 0 -0.5 (/ 0.5 (tan (/ pi #1))))) #1 (M 1 (/ (* 2 pi) #1) 0 0)) (M #0 0 0 0))
+wheels,best,2,ok,23896,23896,31900,135,699628,1936.6,(M 1 0)
+wheels,fifo,2,ok,23896,23896,31900,135,699628,1948,(M 1 0)
+wheels,lifo,2,ok,23896,23896,31900,135,699628,2004.4,(M 1 0)
+dials,best,2,ok,12368,12414,20723,255,750733,1020.4,(C (C (T (T (T l (M 3 (/ pi 2) 0 -2)) (M 1 0 0 0)) (M 1 0 0 0)) (T (T (T l (M 1 0 -0.5 0)) (M 2 0 0 0)) (M 1 0 0 1))) (T (T (T l (M 1 0 -0.5 0)) (M #0 0 0 0)) (M 1 0 0 0)))
+dials,fifo,2,ok,13414,13414,22230,270,750733,1165.4,(C (C (T (T (T l (M 3 (/ pi 2) 0 -2)) (M 1 0 0 0)) (M 1 0 0 0)) (T (T (T l (M 1 0 -0.5 0)) (M 2 0 0 0)) (M 1 0 0 1))) (T (T (T l (M 1 0 -0.5 0)) (M #0 0 0 0)) (M 1 0 0 0)))
+dials,lifo,2,ok,12725,12725,21181,251,750733,1034.6,(C (C (T (T (T l (M 3 (/ pi 2) 0 -2)) (M 1 0 0 0)) (M 1 0 0 0)) (T (T (T l (M 1 0 -0.5 0)) (M 2 0 0 0)) (M 1 0 0 1))) (T (T (T l (M 1 0 -0.5 0)) (M #0 0 0 0)) (M 1 0 0 0)))
+cex,best,3,ok,56,56,181,12,1819,1,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+cex,fifo,3,ok,56,56,181,12,1819,0.7,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+cex,lifo,3,ok,56,56,181,12,1819,0.7,(a b c d e f g h (A B C) (A B C) (A B C) (A B C))
+ctx_thread_1,best,3,ok,418,419,844,158,1011,4.5,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_1,fifo,3,ok,419,419,846,160,1011,4.2,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_1,lifo,3,ok,418,419,844,158,1011,7.4,(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
+ctx_thread_2,best,3,ok,284,285,583,113,910,3.1,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_2,fifo,3,ok,285,285,585,115,910,2.9,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_2,lifo,3,ok,284,285,583,113,910,2.8,(lam (lam (+ (#0 $0 f) (#0 $0 f))))
+ctx_thread_twice,best,3,ok,549,551,1061,190,1213,6.3,(A (lam (lam (+ (a b #0 $0 $1 f) (a b #0 $0 $1 f)))))
+ctx_thread_twice,fifo,3,ok,551,551,1065,194,1213,5.9,(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))
+ctx_thread_twice,lifo,3,ok,550,551,1063,192,1213,5.7,(A (lam (lam (+ (#0 $0 $1 f) (#0 $0 $1 f)))))
+hof,best,3,ok,457,458,880,119,2320,9.3,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+hof,fifo,3,ok,487,487,938,128,2320,8.4,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+hof,lifo,3,ok,487,487,938,128,2320,8.3,(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))
+identical,best,3,ok,7,7,27,3,304,0.1,(a b c d e)
+identical,fifo,3,ok,7,7,27,3,304,0.2,(a b c d e)
+identical,lifo,3,ok,7,7,27,3,304,0.1,(a b c d e)
+issue108,best,3,none,1,1,7,0,,0.1,
+issue108,fifo,3,none,1,1,7,0,,0.1,
+issue108,lifo,3,none,1,1,7,0,,0.1,
+issue108_2,best,3,none,1,1,14,0,,0.1,
+issue108_2,fifo,3,none,1,1,14,0,,0.1,
+issue108_2,lifo,3,none,1,1,14,0,,0.1,
+lio_test1,best,3,ok,15737,15740,27362,563,15653,362,(T #2 (M 1 0 #1 #0))
+lio_test1,fifo,3,ok,15856,15885,27612,585,15653,345.7,(T #2 (M 1 0 #1 #0))
+lio_test1,lifo,3,ok,15969,15969,27827,578,15653,354.3,(T #2 (M 1 0 #1 #0))
+lio_test2,best,3,none,1,1,30,0,,0.4,
+lio_test2,fifo,3,none,1,1,30,0,,0.3,
+lio_test2,lifo,3,none,1,1,30,0,,0.4,
+map,best,3,ok,1894,1903,3143,192,1310,24.7,(app (app (app if (app is_nil #0)) nil) (app (app cons #2) (app #1 (app cdr #0))))
+map,fifo,3,ok,1946,1946,3251,219,1310,22.6,(app (app (app if (app is_nil #0)) nil) (app (app cons #2) (app #1 (app cdr #0))))
+map,lifo,3,ok,1946,1946,3251,219,1310,22.3,(app (app (app if (app is_nil #0)) nil) (app (app cons #2) (app #1 (app cdr #0))))
+map2,best,3,ok,531,534,1055,121,905,6,(if (nil? #0) nil (cons (#2 (car #0) #1) (r (cdr #0))))
+map2,fifo,3,ok,540,540,1073,130,905,5.6,(if (nil? #0) nil (cons (#2 (car #0) #1) (r (cdr #0))))
+map2,lifo,3,ok,540,540,1073,130,905,5.7,(if (nil? #0) nil (cons (#2 (car #0) #1) (r (cdr #0))))
+map_minimal,best,3,ok,343,347,656,78,1108,4.7,(app (app cons (app (app #2 (app car #0)) #1)) (app rec (app cdr #0)))
+map_minimal,fifo,3,ok,352,352,674,89,1108,4.4,(app (app cons (app (app #2 (app car #0)) #1)) (app rec (app cdr #0)))
+map_minimal,lifo,3,ok,352,352,674,87,1108,4.4,(app (app cons (app (app #2 (app car #0)) #1)) (app rec (app cdr #0)))
+safe_ctx_thread_bug,best,3,ok,136,137,300,55,406,1.4,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+safe_ctx_thread_bug,fifo,3,ok,139,139,306,58,406,1.3,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+safe_ctx_thread_bug,lifo,3,ok,139,139,306,58,406,1.5,(Y (lam (lam (is_nil $0 nil (cons (#0 $0))))))
+simple1,best,3,ok,6,6,25,5,200,0.1,(#0 #0 #0)
+simple1,fifo,3,ok,6,6,25,5,200,0.1,(#0 #0 #0)
+simple1,lifo,3,ok,6,6,25,5,200,0.1,(#0 #0 #0)
+simple2,best,3,ok,12,12,43,9,201,0.2,(#0 (lam (#0 #0)))
+simple2,fifo,3,ok,12,12,43,9,201,0.2,(#0 (lam (#0 #0)))
+simple2,lifo,3,ok,12,12,43,9,201,0.2,(#0 (lam (#0 #0)))
+simple_hof,best,3,ok,40,40,121,23,201,0.5,(#0 #0)
+simple_hof,fifo,3,ok,40,40,121,23,201,0.4,(#0 #0)
+simple_hof,lifo,3,ok,40,40,121,23,201,0.6,(#0 #0)
+symbol_weighting_test_1,best,3,ok,22,22,85,7,506,0.3,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_1,fifo,3,ok,22,22,85,7,506,0.3,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_1,lifo,3,ok,22,22,85,7,506,0.4,(+ (+ 1 2) (+ 3 4))
+symbol_weighting_test_2,best,3,ok,24,24,97,7,607,0.4,(* (/ 5 6) (& L1 L2 L3))
+symbol_weighting_test_2,fifo,3,ok,24,24,97,7,607,0.4,(* (/ 5 6) (& L1 L2 L3))
+symbol_weighting_test_2,lifo,3,ok,24,24,97,7,607,0.4,(* (/ 5 6) (& L1 L2 L3))
+tmp_crash,best,3,none,24,24,69,19,,0.3,
+tmp_crash,fifo,3,none,24,24,69,19,,0.5,
+tmp_crash,lifo,3,none,24,24,69,19,,0.4,
+tmp_minimal,best,3,none,1,1,12,0,,0.2,
+tmp_minimal,fifo,3,none,1,1,12,0,,0.1,
+tmp_minimal,lifo,3,none,1,1,12,0,,0.2,
