@@ -89,3 +89,33 @@ binder mask (review finding 5, documented gap); function-shaped
 classification; define/letrec + the layering benchmark; Racket as outer
 oracle; ellipsis benchmark in a for/set-like setting (a variadic
 my-when/begin corpus) as the two mechanisms' first combined test.
+
+## Addendum: the session's final hour (written ~16:00 UTC)
+
+- **Fuzz stage 3 landed**: the inverse property generates ellipsis
+  templates (~33% of trials, zero-length sequences included). Its one
+  counterexample was the FOURTH catalogued un-transcription boundary --
+  a depth-0 pvar occurring only inside an ellip's sub is unrecoverable
+  from a zero-iteration site (macro-micro's documented sound-but-
+  incomplete corner) -- so the threshold for consolidating the
+  non-injectivity catalogue into the design note (set at "a fourth
+  source") has been met; do it next session.
+- **The ellipsis gate had to sharpen**: any-two-lengths opened on the
+  for/set corpus and took its benchmark from ~5.3 to 30+ measured
+  minutes for candidates that cannot win there. Now gated on a variadic
+  FAMILY (same head, two lengths); blind spot recorded at corpus-facts.
+- **my-when benchmark** (tests/my-when-test.rkt): V2 and ellipses in one
+  learned macro, (m v e xs ...) => ((lambda (v) (seq xs ...)) e), H2
+  program refused. Its two documented surprises are a small lesson in
+  corpus design: a recurring head lets a V1-template bake the bound
+  reference in beside a template copy of that head (H1 never fires),
+  and a pvar over the shadowed identifier splices through unrenamed (H2
+  never fires). What forces V2 is cross-program VARIABILITY, not
+  binder-mentioning bodies alone.
+- **Michael's renamed-temporaries question**, answered and tested: one
+  anonymous template binder recovers per-element temporaries spelled
+  differently from each other (the tvar-inside-ellipsis test), H1 still
+  per copy. The recursive-macro case needs new SEARCH machinery (match
+  a fixed point), but no new binder machinery -- anonymity + freshening
+  + referent-aware alpha already generalize; the oracle criterion never
+  mentions how many temporaries exist.
