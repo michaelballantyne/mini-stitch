@@ -5,3 +5,4 @@ compiled/
 # racket bytecode and python caches in experiments/
 compiled/
 __pycache__/
+experiments/*/tmp/
