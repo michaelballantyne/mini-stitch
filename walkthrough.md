@@ -1,7 +1,9 @@
 # A walkthrough: the paper's running example, twice
 
 This file traces one small corpus end to end through both implementations in
-this repository, in their own vocabulary:
+this repository, in their own vocabulary. The intended reading order is the
+order of this document: first `src/ast.rkt` (the shared AST and cost model —
+one minute), then micro with sections 1-2, then mini with the rest.
 
 * **micro-stitch** (`src/micro.rkt`) — the executable specification. It says
   *what* the optimal abstraction is, by enumerating candidates the obvious way
@@ -49,10 +51,10 @@ primitives, i.e. opaque leaves with names.
 
 ### The cost model
 
-From `src/expr.rkt` (stitch's dreamcoder defaults): `COST-APP = COST-LAM = 1`,
+From `src/ast.rkt` (stitch's dreamcoder defaults): `COST-APP = COST-LAM = 1`,
 `COST-VAR = COST-IVAR = COST-PRIM = 100`, and a freshly invented abstraction
 name is a primitive like any other, `COST-NEW-PRIM = 100`. Structure is nearly
-free; leaves are expensive. `cost` (mini) and `term-cost` (micro) compute it.
+free; leaves are expensive. `term-cost` computes it.
 
 | program | cost |
 |---|---|
@@ -94,9 +96,11 @@ two distinct programs**.
 ## 2. micro-stitch: what is computed
 
 `src/micro.rkt` is about 250 lines of actual code (and as much again in
-commentary) with no cleverness anywhere in it. Programs are plain
-immutable trees (`parse`); two occurrences of the same subtree are two unrelated
-pieces of memory; equality is `equal?`.
+commentary) with no cleverness anywhere in it. Programs are plain immutable
+trees built from the five structs of `src/ast.rkt` — this walkthrough writes
+them as s-expressions like `(+ 3 $0)` for readability, meaning the value
+`(app (app (prim '+) (prim '3)) (var 0))`. Two occurrences of the same subtree
+are two unrelated pieces of memory; equality is `equal?`.
 
 ### 2.1 The search space
 
@@ -118,11 +122,20 @@ is the free-variable ban, enforced by construction. Concretely, the candidate
 `(+ 3 (* $0 ??))` is never generated even though it would match
 `(+ 3 (* $0 (+ 2 1)))` in program 3: `$0` there is bound by the *program's*
 lambda, which is outside the abstraction, so the "abstraction" would not be a
-function. (mini enforces the same thing with an explicit test,
-`free-variable-prune?`.)
+function.
 
 So the initial frontier `??` has 10 children; a hole under one of the pattern's
 own lambdas would have 11.
+
+One honesty note about the paper: this enumeration is the one the paper itself
+describes — and immediately discards — as "A Naive Approach" (Section 3.1, the
+paragraph *before* pruning is introduced). The algorithm the paper actually
+presents (its Algorithm 1) has branch-and-bound, upper-bound pruning and
+dominance pruning built in from the first line; micro implements none of that.
+What micro shares with the paper is the *objective* — the utility of Eq. 8,
+the semantic filters of Section 4.3, the rewrite of Section 4.4 — and this
+naive search that visits every candidate the real algorithm would ever
+consider, plus all the ones it exists to avoid.
 
 ### 2.2 Matching
 
@@ -213,9 +226,8 @@ would let micro return something better than stitch and the two would disagree.
 two variables receiving identical arguments everywhere. The canonical shape is
 `(f #0 #1)` over `["(f a a)", "(f b b)"]`: `#0` and `#1` agree at every site, so
 `(f #0 #0)` matches the same places with smaller arity *and* collects the
-multiuse bonus. Both implementations have the filter (`duplicate-argument?` in
-micro, `redundant-argument-prune?` in `src/search.rkt`), and both have unit
-tests for it; this corpus simply does not need it.
+multiuse bonus. The filter (`duplicate-argument?`) has its own unit
+test; this corpus simply does not need it.
 
 ### 2.5 Utility by rewriting
 
@@ -286,32 +298,32 @@ top of the list:
 
 Note that arity-zero abstractions need no special treatment in micro: a
 candidate with no abstraction variables is reached by the enumeration like any
-other. `(+ 3)` scoring 203 will matter twice below — it is what mini computes up
-front as its pruning cutoff (§3.2), and `(+ 2)` scoring 1 is what iteration 2
-will find (§5).
+other. Two of these scores return later: `(+ 3)`'s 203 in §3.2, and `(+ 2)`'s 1
+in §5.
 
 ### 2.7 What that cost
 
 Micro generated **828 candidates**, matched each against all 51 subterms, and
 rewrote the whole corpus **27 times**: 13 ms. That is fine for three tiny
-programs and hopeless immediately afterwards. On prefixes of
-`stitch/data/cogsci/nuts-bolts.json` (the corpus mini is tested on at full
-size, 250 programs):
-
-| programs | micro | mini |
-|---|---|---|
-| 2 | 620 ms | 14 ms |
-| 3 | 1820 ms | 22 ms |
-| 4 | 3272 ms | 22 ms |
-| 5 | 9037 ms | 27 ms |
-| 250 (3 iterations) | — | 2.9 s |
-
-Everything in the next section exists to close that gap without changing the
-answer.
+programs and hopeless immediately afterwards: on 2-, 3-, 4- and 5-program
+prefixes of a realistic corpus (`stitch/data/cogsci/nuts-bolts.json`, whose
+full size is 250 programs) micro takes 0.6 s, 1.8 s, 3.3 s and 9.0 s — the
+frontier of candidates that match somewhere grows with every program added,
+and each candidate re-matches against every subterm and re-rewrites the whole
+corpus. This is where the reading of micro ends: it says what the answer is,
+at a price that only a specification can afford.
 
 ---
 
 ## 3. mini-stitch: the same computation, made fast
+
+mini-stitch computes exactly what micro computes — the tests in
+`tests/micro-test.rkt` hold the two to the same answers — while replacing
+every "recompute from scratch" in micro with something incremental. The same
+nuts-bolts prefixes that cost micro 0.6/1.8/3.3/9.0 seconds cost mini
+14/22/22/27 **milli**seconds, and the full 250-program corpus (hopeless for
+micro) takes about 3 s for three whole iterations. Everything in this section
+exists to close that gap without changing the answer.
 
 ### 3.1 One hash-consed corpus
 

@@ -25,6 +25,35 @@
 ;; every occurrence of this pattern by a call to a new abstraction actually save?
 ;; See "Utility" below.
 ;;
+;; WHAT WE DO DIFFERENTLY FROM micro.rkt
+;;
+;; micro.rkt computes the same answer by the enumeration this algorithm exists
+;; to replace, so almost everything in this module is machinery micro does not
+;; have:
+;;
+;;   * micro's frontier is a FIFO list processed level by level, and every
+;;     candidate that matches anywhere is expanded.  There is no upper bound to
+;;     maintain, hence no priority queue and no branch and bound.  Ours is a
+;;     max-heap on the bound, and a pattern whose bound cannot beat the best
+;;     abstraction so far is discarded unexpanded.
+;;   * micro has no arity-zero priming: an arity-zero abstraction is just a
+;;     candidate with no abstraction variables, and its enumeration reaches it
+;;     like any other.  We score all of them up front, so that the bound has
+;;     something to bite on from the first pop.
+;;   * micro has no analytic utility at all.  Its `abstraction-utility`
+;;     literally rewrites the corpus and subtracts costs, which is the
+;;     definition; the multiuse bonus, the self-overlap correction, the
+;;     used/unused split and the `num-paths` weighting below are all things that
+;;     follow from that definition and have to be re-derived here because we
+;;     refuse to do the rewriting.
+;;   * micro keeps only the prunings that change the answer (zero matches, the
+;;     two-programs rule, the free-variable rule, and the two Section 4.3
+;;     filters).  The dominance-safe prunings -- single-use pruning above all --
+;;     exist here purely for speed.
+;;
+;; The one thing micro does that we do not is get self-similar corpora right;
+;; see rewrite.rkt's `check-cost-mismatch`.
+;;
 ;; DATA DEFINITIONS
 ;;
 ;; A Cost is an integer, in the units of expr.rkt's cost model.

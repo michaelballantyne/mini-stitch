@@ -62,7 +62,10 @@
 (require rackunit
          "../src/expr.rkt"
          "../src/search.rkt"
-         (prefix-in micro: "../src/micro.rkt"))
+         (prefix-in micro: "../src/micro.rkt")
+         ;; `parse` reads a program text into one of micro's trees; see
+         ;; tests/support.rkt, which is where the two representations meet
+         (only-in "support.rkt" parse))
 
 ;; ---------------------------------------------------------------------------
 ;; Data
@@ -154,7 +157,7 @@
 
 ;; corpus-nodes : Corpus -> Natural
 (define (corpus-nodes programs)
-  (for/sum ([p (in-list programs)]) (term-size (micro:parse p))))
+  (for/sum ([p (in-list programs)]) (term-size (parse p))))
 
 ;; random-corpus : Pseudo-Random-Generator Mode -> Corpus
 ;; Two to four programs from the mode's generator, redrawn until the whole
@@ -188,8 +191,8 @@
        (with-handlers ([exn:fail?
                         (lambda (e)
                           (error 'score-corpus "on ~s: ~a" programs (exn-message e)))])
-         (micro:abstraction-utility (micro:parse (abstraction-body a))
-                                    (map micro:parse programs))))
+         (micro:abstraction-utility (parse (abstraction-body a))
+                                    (map parse programs))))
      (scored programs (abstraction-body a) (abstraction-utility a) measured)]))
 
 ;; judge : Scored -> Judgement

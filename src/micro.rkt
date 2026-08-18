@@ -1,74 +1,72 @@
 #lang racket
 
 ;; ---------------------------------------------------------------------------
-;; micro.rkt --- stitch, written as slowly and as plainly as possible
+;; micro.rkt --- what stitch computes, written as slowly and plainly as possible
 ;; ---------------------------------------------------------------------------
 ;;
-;; This module is the *executable specification* of mini-stitch.  It computes
-;; the same abstractions as `search.rkt`, on the same corpora, by the same
-;; definitions -- and it is far too slow to use on anything but a handful of
-;; toy programs.  That is the point.  Everything here is written to be read.
-;; When something in `search.rkt` looks like a trick, this file is where you
-;; find out what the trick is a trick *for*.
+;; The stitch library-learning system (Bowers et al., POPL 2023, "Top-Down
+;; Synthesis for Library Learning") takes a corpus of lambda-calculus programs
+;; and returns the one abstraction that compresses it most.  This module answers
+;; the question "which abstraction is that?", and nothing else.  It is far too
+;; slow to be asked about anything but a handful of toy programs.  That is the
+;; point: everything here is written to be read.
 ;;
-;; Read it as the paper's Sections 3 and 4 made executable:
+;; WHAT THIS IS, RELATIVE TO THE PAPER
 ;;
-;;   Section 3   grow a partial abstraction `??` by filling one hole at a time
-;;               with every production of the grammar, keeping whatever still
-;;               matches the corpus somewhere        -> "Candidate enumeration"
-;;   Section 4.4 to score a candidate, actually rewrite the corpus with it,
-;;               using the bottom-up accept/reject dynamic program, and see how
-;;               much smaller the corpus got          -> "Rewriting"
-;;   Section 4.3 discard candidates that some other candidate provably beats
-;;                                                    -> "Filters"
+;; This file does NOT implement the paper's algorithm.  The paper's algorithm
+;; (Section 3.1, Algorithm 1) is a corpus-guided top-down search: a branch and
+;; bound with upper-bound pruning, dominance pruning, and a best-first worklist,
+;; all built in from the start.  None of that is here.
 ;;
-;; HOW THIS DIFFERS FROM search.rkt (all of it deliberate)
+;; What this file implements is the paper's *objective* -- the thing that
+;; algorithm is an efficient way of reaching.  Find the abstraction maximizing
+;; the compression utility of Eq. 8, subject to the semantic filters real stitch
+;; applies by default:
 ;;
-;;   * Programs are plain immutable trees and equality is `equal?`.  There is no
-;;     hash-consed arena, so two occurrences of the same subtree are two
-;;     unrelated pieces of memory and every question about them is asked twice.
-;;   * Match locations are recomputed from scratch for every candidate, by
-;;     structurally matching the candidate against every subtree of every
-;;     program (the paper's LambdaUnify).  mini instead notes that a child
-;;     pattern's matches are a subset of its parent's and never re-matches.
-;;   * The worklist is a FIFO list, processed level by level.  There is no
-;;     upper bound on utility, so there is no priority queue and no
-;;     branch-and-bound: every candidate that matches anywhere is expanded.
-;;   * There is no analytic utility formula.  `abstraction-utility` literally
-;;     rewrites the corpus and subtracts costs.  So there is no multiuse
-;;     accounting, no self-overlap correction, no used/unused location
-;;     bookkeeping, and no `num-paths` weighting: the rewriter is the
-;;     definition of utility, and the rest is arithmetic that follows from it.
-;;   * The dominance-safe prunings are gone: no single-use pruning, no
-;;     arity-zero priming (an arity-zero abstraction is just a candidate with no
-;;     abstraction variables, and the enumeration reaches it like any other).
+;;   * the abstraction must appear in at least two programs;
+;;   * no de Bruijn variable may be free at the top of its body;
+;;   * a location whose argument would capture a binder that lives inside the
+;;     body is matched, but never rewritten;
+;;   * argument capture (Section 4.3) is imposed, which is not a mere speed
+;;     measure: by the paper's own footnote 2 it can rule out an abstraction
+;;     that would have scored better, so it is part of WHAT stitch computes and
+;;     not only of how fast.
+;;
+;; It reaches that objective by the enumeration the paper itself describes and
+;; then discards -- "A Naive Approach", Section 3.1, the paragraph just before
+;; pruning is introduced -- grow the partial abstraction `??` by filling one
+;; hole at a time with every production of the grammar, keep whatever still
+;; matches the corpus somewhere, and score every finished candidate.  And it
+;; takes the paper's Section 4.4 rewriting dynamic program as the *definition*
+;; of utility rather than as one way to compute it: to score a candidate, we
+;; actually rewrite the corpus with it and see how much smaller the corpus got.
+;;
+;; One deviation from Eq. 8 read literally is deliberate, and follows the real
+;; implementation: the size charged for the abstraction itself is
+;; cost_{alpha=0}(A) -- abstraction variables cost nothing -- where Eq. 8 with
+;; the paper's Section 6 constants would charge cost_alpha = 100 per variable.
+;;
+;; So: this file pins down what the answer IS.  How to compute it fast is
+;; somebody else's problem.
 ;;
 ;; WHAT IS KEPT, BECAUSE DROPPING IT WOULD CHANGE THE ANSWER
 ;;
-;;   * zero-match pruning -- also what makes the enumeration finite;
-;;   * a candidate must match in at least two distinct programs (stitch's
-;;     default single-task pruning);
-;;   * no de Bruijn variable may be free at the top of the body;
-;;   * a location whose argument would capture a lambda *inside* the body is
-;;     matched but never rewritten (the paper's &i indices, Appendix B);
-;;   * the two Section 4.3 filters.  The argument-capture one is not actually
-;;     dominance-safe (paper footnote 2): stitch optimizes subject to it, so
-;;     without it micro could return a *better* abstraction than stitch and the
-;;     two would disagree.  The redundant-argument one *is* dominance-safe and
-;;     could be dropped; it is kept because it is a few lines and it makes micro's
-;;     tie-breaking agree with mini's more often.
-;;
-;; WHERE MICRO AND MINI DISAGREE
-;;
-;; On one class of corpus they do, and micro is right: when a candidate matches
-;; at nested locations *and* uses a variable more than once, stitch's analytic
-;; utility credits the inner saving once per occurrence, but rewriting the outer
-;; location is exactly what deletes the duplicate occurrences.  stitch itself
-;; detects this -- the real binary aborts on its rewrite cost-mismatch assertion
-;; -- and mini reproduces stitch faithfully, so it inherits the over-count.  The
-;; last test in this file is a two-program corpus that pins the whole story
-;; down.  It is the clearest argument for having written the specification
-;; twice.
+;;   * zero-match pruning.  A candidate that matches nowhere can never grow into
+;;     one that matches somewhere, so nothing is lost by dropping it -- and it
+;;     is also what makes the enumeration finite at all;
+;;   * the two-programs rule.  An abstraction is meant to capture something
+;;     shared; one confined to a single program wins on raw cost while being
+;;     useless.  This is stitch's default single-task pruning, and it is a
+;;     judgement about what we want, not a speed hack;
+;;   * no de Bruijn variable free at the top of the body -- an abstraction with
+;;     one is not a function;
+;;   * the paper's &i indices (Appendix B): a location whose argument would have
+;;     to capture a lambda *inside* the body is matched but never rewritten,
+;;     because there is no way to pass such an argument in from outside;
+;;   * the two Section 4.3 filters.  Argument capture, as noted above, changes
+;;     the answer.  Redundant argument elimination genuinely is dominance-safe
+;;     and could be dropped without changing what is optimal; it is kept because
+;;     it costs a few lines and it settles ties the same way stitch settles them.
 ;;
 ;; DATA DEFINITIONS
 ;;
@@ -77,8 +75,8 @@
 ;;   (var i)      a de Bruijn variable $i, i >= 0
 ;;   (app f x)    an application; f and x are Terms
 ;;   (lam b)      a lambda; b is a Term
-;; -- expr.rkt's node structs, but with Term children instead of arena indices.
-;; A corpus is just a (Listof Term), one per program.
+;; -- ast.rkt's node structs, with Term children.  A corpus is just a
+;; (Listof Term), one per program.
 ;;
 ;; A Pattern is a partial abstraction: a Term extended with
 ;;   'hole        an unfilled `??`
@@ -94,18 +92,15 @@
 ;; An argument containing a `captured` cannot be passed in from outside, so a
 ;; location that produces one is matched but cannot be rewritten.
 ;;
-;; A Cost is an integer in expr.rkt's cost model.
-;;
-;; Parsing, printing and the cost constants come from expr.rkt, so micro and
-;; mini read and write exactly the same corpora.
+;; A Cost is an integer in ast.rkt's cost model.
 ;; ---------------------------------------------------------------------------
 
-(require "expr.rkt"
+(require "ast.rkt"
          racket/set)
 
 (provide (struct-out captured)
          (struct-out learned)
-         parse term->string term-cost
+         term-cost corpus-cost
          micro-search micro-compress
          ;; exposed for the tests below and for anyone reading along
          lift match-pattern pattern-arity
@@ -121,37 +116,6 @@
 ;; that bound it.  d counts the crossed lambdas from the innermost one outwards.
 (struct captured (i) #:transparent)
 
-;; parse : String -> Term
-;; Read one program in stitch's surface syntax.  expr.rkt owns the parser (and
-;; its error messages); we immediately unfold its arena representation back into
-;; an ordinary tree, which is the only representation this module knows.
-(define (parse text)
-  (define c (make-corpus))
-  (define root (parse-program! c text))
-  (let unfold ([i root])
-    (define n (corpus-node c i))
-    (cond [(app? n) (app (unfold (app-fun n)) (unfold (app-arg n)))]
-          [(lam? n) (lam (unfold (lam-body n)))]
-          [else n])))
-
-;; term->string : Pattern -> String
-;; Print a Term, an Argument or a Pattern in stitch's surface syntax, by folding
-;; it into a scratch corpus and deferring to expr.rkt's printer -- so micro's
-;; output is character-for-character mini's.  A hole prints as `??` and the
-;; paper's &d prints as `&d`; neither can occur in a finished abstraction body.
-(define scratch-corpus (make-corpus))
-(define (term->string t)
-  (define (intern t)
-    (cond [(app? t) (add-node! scratch-corpus (app (intern (app-fun t))
-                                                   (intern (app-arg t))))]
-          [(lam? t) (add-node! scratch-corpus (lam (intern (lam-body t))))]
-          [(eq? t 'hole) (add-node! scratch-corpus (prim '??))]
-          [(captured? t)
-           (add-node! scratch-corpus (prim (string->symbol
-                                            (format "&~a" (captured-i t)))))]
-          [else (add-node! scratch-corpus t)]))
-  (expr->string scratch-corpus (intern t)))
-
 ;; term-cost : Pattern -> Cost
 ;; The cost model's size of a term.  Abstraction variables cost *nothing*: they
 ;; are parameters, not structure.  That is the paper's `cost_{alpha=0}`, and it
@@ -165,7 +129,7 @@
         [(var? t) COST-VAR]
         [(captured? t) COST-VAR]
         [(prim? t) COST-PRIM]
-        [else (error 'term-cost "not a term: ~a" t)]))
+        [else (error 'term-cost "not a term: ~s" t)]))
 
 ;; corpus-cost : (Listof Term) -> Cost
 ;; What the whole corpus costs.  Compression is exactly the reduction of this
@@ -174,16 +138,15 @@
   (for/sum ([t (in-list programs)]) (term-cost t)))
 
 (module+ test
-  (test-case "parsing, printing and cost"
-    (check-equal? (term->string (parse "(a a a)")) "(a a a)")
-    (check-equal? (term->string (parse "((f x) y)")) "(f x y)")
-    (check-equal? (term->string (parse "(lambda (+ $0 b))")) "(lam (+ $0 b))")
-    ;; (a a a) = ((a a) a): two apps, three prims -- stitch's original_cost for
-    ;; data/basic/simple1.json is 604 for the two programs together
-    (check-equal? (term-cost (parse "(a a a)")) 302)
-    (check-equal? (corpus-cost (map parse '("(a a a)" "(b b b)"))) 604)
-    ;; abstraction variables are free of charge
-    (check-equal? (term-cost (parse "(#0 #0 #0)")) 2)))
+  (test-case "the cost of a term"
+    (define A (prim 'a))
+    (define B (prim 'b))
+    ;; (a a a) is ((a a) a): two apps and three prims.  Real stitch reports
+    ;; original_cost 604 for the two-program corpus below.
+    (check-equal? (term-cost (app (app A A) A)) 302)
+    (check-equal? (corpus-cost (list (app (app A A) A) (app (app B B) B))) 604)
+    ;; abstraction variables are free of charge, so (#0 #0 #0) costs two apps
+    (check-equal? (term-cost (app (app (ivar 0) (ivar 0)) (ivar 0))) 2)))
 
 ;; term-free-vars : Term -> (Setof Natural)
 ;; The de Bruijn indices that escape the term, expressed relative to its root.
@@ -208,12 +171,14 @@
 
 (module+ test
   (test-case "free variables and subterms"
-    (check-equal? (term-free-vars (parse "(lam ($0 $1))")) (seteqv 0))
-    (check-equal? (term-free-vars (parse "(f x)")) (seteqv))
+    ;; in (lam ($0 $1)) the $0 is bound by the lambda and the $1 escapes as $0
+    (check-equal? (term-free-vars (lam (app (var 0) (var 1)))) (seteqv 0))
+    (check-equal? (term-free-vars (app (prim 'f) (prim 'x))) (seteqv))
     ;; (f x) has 3 subterms: itself, f, x
-    (check-equal? (length (subterms (parse "(f x)"))) 3)
+    (check-equal? (length (subterms (app (prim 'f) (prim 'x)))) 3)
     ;; (a a a) = ((a a) a) has 5: the two apps and three copies of `a`
-    (check-equal? (length (subterms (parse "(a a a)"))) 5)))
+    (define A (prim 'a))
+    (check-equal? (length (subterms (app (app A A) A))) 5)))
 
 ;; ---------------------------------------------------------------------------
 ;; Lifting an argument out of the body (the paper's &i)
@@ -231,10 +196,6 @@
 ;;     that lives *inside* the abstraction body.  There is no way to pass that
 ;;     in from outside, so it becomes the paper's &d, and any location whose
 ;;     arguments contain one cannot be rewritten.
-;;
-;; This is the same function as expr.rkt's `shift-arg`, with sentinel ivars
-;; renamed to `captured` so that nothing can confuse them with the abstraction's
-;; own variables.
 
 ;; lift : Term Natural -> Argument
 ;; The term as seen from m lambdas further out.
@@ -261,22 +222,24 @@
 (module+ test
   (test-case "lifting arguments out from under lambdas"
     ;; nothing crossed: nothing happens
-    (check-equal? (lift (parse "(g x)") 0) (parse "(g x)"))
+    (define gx (app (prim 'g) (prim 'x)))
+    (check-equal? (lift gx 0) gx)
     ;; a variable pointing above the match location is renumbered
-    (check-equal? (lift (parse "$3") 1) (parse "$2"))
-    (check-equal? (lift (parse "$3") 2) (parse "$1"))
+    (check-equal? (lift (var 3) 1) (var 2))
+    (check-equal? (lift (var 3) 2) (var 1))
     ;; a variable pointing at a crossed lambda becomes &d, counting the crossed
     ;; lambdas from the inside
-    (check-equal? (lift (parse "$0") 1) (captured 0))
-    (check-equal? (lift (parse "$0") 2) (captured 0))
-    (check-equal? (lift (parse "$1") 2) (captured 1))
-    (check-true (captures? (lift (parse "$0") 1)))
-    (check-false (captures? (lift (parse "$3") 1)))
+    (check-equal? (lift (var 0) 1) (captured 0))
+    (check-equal? (lift (var 0) 2) (captured 0))
+    (check-equal? (lift (var 1) 2) (captured 1))
+    (check-true (captures? (lift (var 0) 1)))
+    (check-false (captures? (lift (var 3) 1)))
     ;; a variable bound inside the argument is untouched, one that escapes it is
     ;; not: in (lam ($0 $1 $2)) with m = 1, $0 is the argument's own binder,
-    ;; $1 lands on the crossed lambda, $2 points above the match location
-    (check-equal? (term->string (lift (parse "(lam ($0 $1 $2))") 1))
-                  "(lam ($0 &0 $1))")))
+    ;; $1 lands on the crossed lambda, and $2 points above the match location,
+    ;; so the lift produces (lam ($0 &0 $1))
+    (check-equal? (lift (lam (app (app (var 0) (var 1)) (var 2))) 1)
+                  (lam (app (app (var 0) (captured 0)) (var 1))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Matching
@@ -322,32 +285,43 @@
 
 (module+ test
   (test-case "matching"
+    (define F (prim 'f))
+    (define A (prim 'a))
+    (define B (prim 'b))
+    (define fx (app F (prim 'x)))
+    (define gy (app (prim 'g) (prim 'y)))
     ;; a concrete pattern matches only itself
-    (check-equal? (match-pattern (parse "(f x)") (parse "(f x)")) '())
-    (check-false (match-pattern (parse "(f x)") (parse "(f y)")))
-    ;; #0 absorbs whatever is there
-    (check-equal? (map binding-arg (match-pattern (parse "(f #0)") (parse "(f (g y))")))
-                  (list (parse "(g y)")))
-    ;; two uses of #0 must agree
-    (check-not-false (match-pattern (parse "(f #0 #0)") (parse "(f a a)")))
-    (check-false (match-pattern (parse "(f #0 #0)") (parse "(f a b)")))
+    (check-equal? (match-pattern fx fx) '())
+    (check-false (match-pattern fx (app F (prim 'y))))
+    ;; (f #0) against (f (g y)): #0 absorbs whatever is there
+    (check-equal? (map binding-arg (match-pattern (app F (ivar 0)) (app F gy)))
+                  (list gy))
+    ;; two uses of #0 must agree: (f #0 #0) matches (f a a) but not (f a b)
+    (define ff (app (app F (ivar 0)) (ivar 0)))
+    (check-not-false (match-pattern ff (app (app F A) A)))
+    (check-false (match-pattern ff (app (app F A) B)))
     ;; two variables need not
-    (check-equal? (length (match-pattern (parse "(f #0 #1)") (parse "(f a b)"))) 2)
+    (check-equal? (length (match-pattern (app (app F (ivar 0)) (ivar 1))
+                                         (app (app F A) B)))
+                  2)
     ;; a hole matches anything and binds nothing
-    (check-equal? (match-pattern (app (prim 'f) 'hole) (parse "(f (g y))")) '())
-    ;; an argument taken from under the pattern's own lambda is lifted, so a
-    ;; variable bound by that lambda comes out as &0 and the location, while
-    ;; matched, cannot be rewritten
-    (define bs (match-pattern (parse "(lam (f #0))") (parse "(lam (f $0))")))
+    (check-equal? (match-pattern (app F 'hole) (app F gy)) '())
+    ;; an argument taken from under the pattern's own lambda is lifted, so in
+    ;; (lam (f #0)) against (lam (f $0)) the argument comes out as &0 and the
+    ;; location, while matched, cannot be rewritten
+    (define bs (match-pattern (lam (app F (ivar 0))) (lam (app F (var 0)))))
     (check-equal? (map binding-arg bs) (list (captured 0)))
     (check-true (captures? (binding-arg (car bs))))
-    ;; ... and "the same argument" is judged after lifting: here #0 is used at
-    ;; two different depths, and $1 under two lambdas is the same argument as
-    ;; $0 under one
-    (check-not-false (match-pattern (parse "(f (lam #0) (lam (lam #0)))")
-                                    (parse "(f (lam $1) (lam (lam $2)))")))
-    (check-false (match-pattern (parse "(f (lam #0) (lam (lam #0)))")
-                                (parse "(f (lam $1) (lam (lam $1)))")))))
+    ;; ... and "the same argument" is judged after lifting: in
+    ;; (f (lam #0) (lam (lam #0))) the variable #0 is used at two different
+    ;; depths, and $1 under two lambdas is the same argument as $0 under one
+    (define two-depths (app (app F (lam (ivar 0))) (lam (lam (ivar 0)))))
+    (check-not-false (match-pattern two-depths
+                                    (app (app F (lam (var 1)))
+                                         (lam (lam (var 2))))))
+    (check-false (match-pattern two-depths
+                                (app (app F (lam (var 1)))
+                                     (lam (lam (var 1))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Rewriting, and utility by rewriting
@@ -373,10 +347,11 @@
 ;;
 ;;     utility(A) = cost(corpus) - cost(rewrite(corpus, A)) - cost(A)
 ;;
-;; -- what we saved, less what the abstraction itself costs.  Everything mini
-;; computes analytically (the multiuse bonus, the self-overlap correction, the
-;; used/unused split, the per-location occurrence counts) is a consequence of
-;; this one line.
+;; -- what we saved, less what the abstraction itself costs.  The multiuse
+;; bonus, the correction for a pattern that overlaps itself, the split between
+;; locations that are rewritten and locations that are merely matched: none of
+;; them are computed here, because all of them are consequences of this one
+;; line.
 
 ;; rewrite-corpus : Pattern (Listof Term) Symbol -> (values (Listof Term) Cost)
 ;; Rewrite every program with the abstraction, naming it `name`, and also return
@@ -437,41 +412,47 @@
   (define after (corpus-cost rewritten))
   (unless (= after predicted)
     (error 'abstraction-utility
-           "the rewrite costs ~a but the dynamic program predicted ~a, for ~a"
-           after predicted (term->string p)))
+           "the rewrite costs ~a but the dynamic program predicted ~a, for ~s"
+           after predicted p))
   (- (corpus-cost programs) after (term-cost p)))
 
 (module+ test
-  (test-case "utility by rewriting: stitch's data/basic/simple1.json"
-    ;; (a a a) and (b b b) both become (fn_0 a) / (fn_0 b) under (#0 #0 #0).
+  (test-case "utility by rewriting: an abstraction with one argument"
+    ;; The corpus (a a a) and (b b b), which is stitch's data/basic/simple1.
+    ;; Both programs become a call to (#0 #0 #0):
     ;;   before: 302 + 302 = 604
     ;;   after:  201 + 201 = 402      (one app, the new primitive, the argument)
     ;;   body:   two apps = 2
     ;; so utility = 604 - 402 - 2 = 200, which is what the real binary reports.
-    (define programs (map parse '("(a a a)" "(b b b)")))
-    (define body (parse "(#0 #0 #0)"))
+    (define A (prim 'a))
+    (define B (prim 'b))
+    (define programs (list (app (app A A) A) (app (app B B) B)))
+    (define body (app (app (ivar 0) (ivar 0)) (ivar 0)))
     (define-values (rewritten predicted) (rewrite-corpus body programs 'fn_0))
-    (check-equal? (map term->string rewritten) '("(fn_0 a)" "(fn_0 b)"))
+    (check-equal? rewritten (list (app (prim 'fn_0) A) (app (prim 'fn_0) B)))
     (check-equal? predicted 402)
     (check-equal? (abstraction-utility body programs) 200))
 
   (test-case "utility by rewriting: an arity-zero abstraction"
-    ;; data/basic/identical.json: naming the whole program is worth 304.
-    (define programs (map parse '("(a b c d e)" "(a b c d e)")))
-    (define body (parse "(a b c d e)"))
-    (check-equal? (abstraction-utility body programs) 304)
-    (define-values (rewritten _) (rewrite-corpus body programs 'fn_0))
-    (check-equal? (map term->string rewritten) '("fn_0" "fn_0")))
+    ;; Two copies of (a b c d e), stitch's data/basic/identical: naming the whole
+    ;; program takes each of them down to a bare primitive, and is worth 304.
+    (define abcde
+      (app (app (app (app (prim 'a) (prim 'b)) (prim 'c)) (prim 'd)) (prim 'e)))
+    (define programs (list abcde abcde))
+    (check-equal? (abstraction-utility abcde programs) 304)
+    (define-values (rewritten _) (rewrite-corpus abcde programs 'fn_0))
+    (check-equal? rewritten (list (prim 'fn_0) (prim 'fn_0))))
 
   (test-case "the rewriter refuses a location that would capture"
     ;; (lam (f a #0)) matches both programs, but in the first one the argument
     ;; is $0 -- the variable bound by the pattern's own lambda.  That location
     ;; is matched and cannot be rewritten, so only the second one changes.
-    (define programs (map parse '("(lam (f a $0))" "(lam (f a b))")))
-    (define body (parse "(lam (f a #0))"))
-    (define-values (rewritten _) (rewrite-corpus body programs 'fn_0))
-    (check-equal? (map term->string rewritten)
-                  '("(lam (f a $0))" "(fn_0 b)")))
+    (define fa (app (prim 'f) (prim 'a)))
+    (define p0 (lam (app fa (var 0))))               ; (lam (f a $0))
+    (define p1 (lam (app fa (prim 'b))))             ; (lam (f a b))
+    (define body (lam (app fa (ivar 0))))            ; (lam (f a #0))
+    (define-values (rewritten _) (rewrite-corpus body (list p0 p1) 'fn_0))
+    (check-equal? rewritten (list p0 (app (prim 'fn_0) (prim 'b)))))
 
   (test-case "the DP prefers the better of two overlapping uses"
     ;; (#0 #0) can be used at the root of (h (h x)) or at the inner (h x), but
@@ -479,8 +460,9 @@
     ;; alone costs 1 + 100 + (100 + 1 + 100) = 302; rewriting the outer one
     ;; costs 100 + 1 + cost((h x)) = 302 as well, so the tie goes to rejecting
     ;; the outer.  Either way the corpus shrinks by the same amount.
-    (define programs (map parse '("(h (h x))" "(h (h y))")))
-    (define body (parse "(#0 #0)"))
+    (define H (prim 'h))
+    (define programs (list (app H (app H (prim 'x))) (app H (app H (prim 'y)))))
+    (define body (app (ivar 0) (ivar 0)))
     (define-values (rewritten predicted) (rewrite-corpus body programs 'fn_0))
     (check-equal? (corpus-cost rewritten) predicted)))
 
@@ -536,7 +518,7 @@
        (values (lam b) filled?)]
       [else (values t #f)]))
   (define-values (out filled?) (walk p))
-  (unless filled? (error 'fill-hole "~a has no hole" (term->string p)))
+  (unless filled? (error 'fill-hole "~s has no hole" p))
   out)
 
 ;; corpus-prims : (Listof Term) -> (Listof Symbol)
@@ -567,21 +549,23 @@
 (module+ test
   (test-case "holes, arity and expansion"
     (check-equal? (hole-depth 'hole) 0)
-    (check-equal? (hole-depth (parse "(f x)")) #f)
-    (check-true (finished? (parse "(#0 #0)")))
+    (check-equal? (hole-depth (app (prim 'f) (prim 'x))) #f)
+    (check-true (finished? (app (ivar 0) (ivar 0))))
     ;; the leftmost hole of (?? (lam ??)) is the function position, at depth 0;
     ;; once that is filled the next one is inside the lambda, at depth 1
     (define p (app 'hole (lam 'hole)))
     (check-equal? (hole-depth p) 0)
+    (check-equal? (fill-hole p (prim 'f)) (app (prim 'f) (lam 'hole)))
     (check-equal? (hole-depth (fill-hole p (prim 'f))) 1)
-    (check-equal? (term->string (fill-hole p (prim 'f))) "(f (lam ??))")
-    (check-equal? (pattern-arity (parse "(#0 (#1 #0))")) 2)
+    ;; (#0 (#1 #0)) uses two variables
+    (check-equal? (pattern-arity (app (ivar 0) (app (ivar 1) (ivar 0)))) 2)
     (check-equal? (pattern-arity 'hole) 0)
     ;; at depth 0 no de Bruijn variable is legal; at depth 1 exactly $0 is
-    (check-equal? (map term->string (expansions p '(f) 1))
-                  '("(?? ??)" "(lam ??)" "f" "#0"))
-    (check-equal? (map term->string (expansions (fill-hole p (prim 'f)) '(f) 2))
-                  '("(?? ??)" "(lam ??)" "$0" "f" "#0"))))
+    (check-equal? (expansions p '(f) 1)
+                  (list (app 'hole 'hole) (lam 'hole) (prim 'f) (ivar 0)))
+    (check-equal? (expansions (fill-hole p (prim 'f)) '(f) 2)
+                  (list (app 'hole 'hole) (lam 'hole)
+                        (var 0) (prim 'f) (ivar 0)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Where a candidate matches, and the filters
@@ -592,10 +576,8 @@
 (struct site (program bindings) #:transparent)
 
 ;; pattern-sites : Pattern (Listof Term) -> (Listof Site)
-;; Every place in the corpus the candidate matches.  This is the from-scratch
-;; matching micro is built around: mini gets the same answer by intersecting the
-;; parent pattern's locations, and never walks the corpus again after the first
-;; pass.
+;; Every place in the corpus the candidate matches, found by matching the
+;; candidate against every subterm of every program, from scratch, every time.
 (define (pattern-sites p programs)
   (append*
    (for/list ([t (in-list programs)] [k (in-naturals)])
@@ -625,9 +607,8 @@
 ;;
 ;; It is the one filter here that is not strictly dominance-safe -- footnote 2
 ;; of the paper admits an abstraction used many times at a single location can
-;; be worth more with the variable than without.  stitch optimizes subject to
-;; it anyway, so micro must too, or micro would sometimes return something
-;; better than stitch and the two would disagree.
+;; be worth more with the variable than without.  stitch optimizes subject to it
+;; anyway, so the filter is part of the objective and not of the search.
 ;;
 ;; The free-variable proviso matters: an argument that mentions something bound
 ;; outside the match location cannot be written into the body at all.
@@ -642,8 +623,8 @@
 ;; argument at every site?  Then using one variable twice matches the same
 ;; places with a smaller arity and gets paid for the repetition, so it strictly
 ;; dominates (the paper's redundant argument elimination).  Unlike the filter
-;; above this one really is safe to drop; it is kept because it costs a few lines
-;; and keeps micro's choices closer to mini's.
+;; above this one really is safe to drop; it is kept because it costs a few
+;; lines and it settles ties the way stitch settles them.
 (define (duplicate-argument? sites arity)
   (for*/or ([i (in-range arity)]
             [j (in-range (add1 i) arity)])
@@ -675,15 +656,22 @@
 
 (module+ test
   (test-case "sites and filters"
-    (define programs (map parse '("(f a x)" "(f a y)")))
+    (define F (prim 'f))
+    (define A (prim 'a))
+    (define B (prim 'b))
+    (define fa (app F A))
+    ;; the corpus (f a x) and (f a y)
+    (define fax (app fa (prim 'x)))
+    (define fay (app fa (prim 'y)))
+    (define programs (list fax fay))
     ;; (f a ??) matches the root of both programs and nowhere else
-    (define sites (pattern-sites (app (app (prim 'f) (prim 'a)) 'hole) programs))
+    (define sites (pattern-sites (app fa 'hole) programs))
     (check-equal? (length sites) 2)
     (check-equal? (map site-program sites) '(0 1))
     (check-false (too-few-programs? sites))
     ;; ... but (f a x) matches only the first, and is therefore rejected
-    (check-true (too-few-programs? (pattern-sites (parse "(f a x)") programs)))
-    (check-true (reject? (parse "(f a x)") (pattern-sites (parse "(f a x)") programs) 0))
+    (check-true (too-few-programs? (pattern-sites fax programs)))
+    (check-true (reject? fax (pattern-sites fax programs) 0))
     ;; the identity function is not an abstraction
     (check-true (reject? (ivar 0) (pattern-sites (ivar 0) programs) 0))
     ;; (#0 #1 ??): #0 sees `f` at both sites and `f` is closed, so #0 is not
@@ -692,8 +680,8 @@
     (check-true (constant-argument? (pattern-sites p programs) 2))
     (check-false (duplicate-argument? (pattern-sites p programs) 2))
     ;; (f #0 #1) over (f a a) and (f b b): the two variables always agree
-    (define q (parse "(f #0 #1)"))
-    (define qsites (pattern-sites q (map parse '("(f a a)" "(f b b)"))))
+    (define q (app (app F (ivar 0)) (ivar 1)))
+    (define qsites (pattern-sites q (list (app (app F A) A) (app (app F B) B))))
     (check-true (duplicate-argument? qsites 2))
     (check-false (constant-argument? qsites 2))))
 
@@ -707,11 +695,11 @@
 ;; finished one by rewriting the corpus with it; ties go to whichever was
 ;; reached first.
 ;;
-;; The loop is this short because there is no bound to maintain, no queue to
-;; prioritize and no incremental state to thread: every candidate is matched
+;; The loop is this short because there is nothing to maintain between steps: no
+;; bound on what a candidate might grow into, no priority among the candidates,
+;; no state carried from a pattern to its children.  Every candidate is matched
 ;; against the corpus from scratch and every finished one is scored by rewriting
-;; the corpus from scratch.  Nearly all of mini's machinery exists to avoid
-;; doing exactly that.
+;; the corpus from scratch.
 (define (micro-search programs [max-arity 2])
   (define prims (corpus-prims programs))
   (let level ([frontier (list 'hole)] [best #f] [best-utility 0])
@@ -740,7 +728,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; A Learned records one iteration's answer:
-;;   body        the abstraction body, printed in stitch's format
+;;   body        the abstraction body, a finished Pattern
 ;;   arity       how many arguments it takes
 ;;   utility     cost saved, less the cost of the abstraction itself
 ;;   compressive cost saved
@@ -749,12 +737,12 @@
 (struct learned (body arity utility compressive final-cost programs)
   #:transparent)
 
-;; micro-compress : (Listof String) [Natural] [Natural] -> (Listof Learned)
+;; micro-compress : (Listof Term) [Natural] [Natural] -> (Listof Learned)
 ;; Learn a library, one abstraction at a time: search, rewrite the corpus with
 ;; the winner under the name fn_k, and search the result again.  Stops early
 ;; when nothing is worth abstracting any more.
-(define (micro-compress program-texts [max-arity 2] [iterations 1])
-  (let loop ([programs (map parse program-texts)] [k 0] [out '()])
+(define (micro-compress programs [max-arity 2] [iterations 1])
+  (let loop ([programs programs] [k 0] [out '()])
     (cond
       [(= k iterations) (reverse out)]
       [else
@@ -767,225 +755,10 @@
           (define before (corpus-cost programs))
           (define after (corpus-cost rewritten))
           (loop rewritten (add1 k)
-                (cons (learned (term->string body)
+                (cons (learned body
                                (pattern-arity body)
                                (- before after (term-cost body))
                                (- before after)
                                after
                                rewritten)
                       out))])])))
-
-;; ---------------------------------------------------------------------------
-;; micro against mini
-;; ---------------------------------------------------------------------------
-;;
-;; The point of writing the specification twice.  For each corpus, micro's
-;; slow-but-obvious answer must agree with search.rkt's fast one: the same
-;; utility, the same corpus cost after rewriting, and -- when the winner is not
-;; a tie -- the same body.
-;;
-;; Bodies are compared up to renaming the abstraction variables, because the two
-;; searches introduce them in different orders (micro fills the leftmost hole,
-;; mini the most recently created one), so the same abstraction can come out as
-;; (f #0 #1) here and (f #1 #0) there.
-
-(module+ test
-  (require (prefix-in mini: "search.rkt"))
-
-  ;; canonical : Pattern -> String
-  ;; The body printed with its abstraction variables renumbered in order of
-  ;; first appearance, left to right.
-  (define (canonical p)
-    (define seen '())
-    (define (rename t)
-      (cond [(ivar? t)
-             (unless (memv (ivar-i t) seen) (set! seen (append seen (list (ivar-i t)))))
-             (ivar (index-of seen (ivar-i t)))]
-            [(app? t) (app (rename (app-fun t)) (rename (app-arg t)))]
-            [(lam? t) (lam (rename (lam-body t)))]
-            [else t]))
-    (term->string (rename p)))
-
-  ;; check-agrees : String (Listof String) [Natural] -> Void
-  ;; Run both implementations on the same corpus and compare.
-  (define (check-agrees name texts [max-arity 2])
-    (define start (current-inexact-milliseconds))
-    (define programs (map parse texts))
-    (define micro (micro-search programs max-arity))
-    (define elapsed (- (current-inexact-milliseconds) start))
-    (define mini (mini:search (corpus-from-programs texts) max-arity))
-    (cond
-      [(not mini) (check-false micro (format "~a: mini found nothing" name))]
-      [else
-       (check-not-false micro (format "~a: micro found nothing" name))
-       (when micro
-         (define utility (abstraction-utility micro programs))
-         (define-values (rewritten _) (rewrite-corpus micro programs 'fn_0))
-         (check-equal? utility (mini:abstraction-utility mini)
-                       (format "~a: utility" name))
-         (check-equal? (- (corpus-cost programs) (corpus-cost rewritten))
-                       (mini:abstraction-compressive mini)
-                       (format "~a: cost after rewriting" name))
-         (check-equal? (pattern-arity micro) (mini:abstraction-arity mini)
-                       (format "~a: arity" name))
-         (check-equal? (canonical micro) (canonical (parse (mini:abstraction-body mini)))
-                       (format "~a: body" name))
-         (printf "  ~a: ~a  utility ~a  (micro ~ams)\n"
-                 name (term->string micro) utility (round elapsed)))]))
-
-  (test-case "micro agrees with mini: stitch's smallest corpora"
-    ;; every corpus here is a file in stitch/data/basic, named to match
-    (check-agrees "simple1" '("(a a a)" "(b b b)"))
-    (check-agrees "simple2" '("(a (lam (a a)))" "(b (lam (b b)))"))
-    (check-agrees "identical" '("(a b c d e)" "(a b c d e)"))
-    (check-agrees "simple_hof" '("(a (lam ((a $0) (a $0))))"
-                                 "(a (lam (($0 b) ($0 b))))"))
-    (check-agrees "tmp_minimal" '("(a b)" "(a c)"))
-    (check-agrees "ctx_thread_2" '("(lam (lam (+ (a b c $0 f) (a b c $0 f))))"
-                                   "(lam (lam (+ (a b z $0 f) (a b z $0 f))))"))
-    (check-agrees "ctx_thread_1" '("(A (lam (lam (+ (a b c $0 f) (a b c $0 f)))))"
-                                   "(A (lam (lam (+ (a b z $0 f) (a b z $0 f)))))"))
-    ;; hof is the largest corpus micro can still be asked about; it is also the
-    ;; one where the two searches number the abstraction variables differently,
-    ;; which is what `canonical` is for
-    (check-agrees "hof"
-                  '("(lam (app (app cons (app inc $0)) (app (app cons (app inc $0)) empty)))"
-                    "(lam (app (app cons (app dec $0)) (app (app cons (app dec $0)) empty)))"
-                    "(lam (app (app cons (app (app plus $0) $0)) (app (app cons (app (app plus $0) $0)) empty)))")))
-
-  (test-case "micro agrees with mini: hand-written corner cases"
-    ;; an abstraction variable used twice: the multiuse bonus, which micro gets
-    ;; for free because rewriting really does delete the second copy
-    (check-agrees "multiuse" '("(f a a)" "(f b b)"))
-    ;; a location that matches but would capture, so it cannot be rewritten
-    (check-agrees "capture" '("(lam (g (f a b) $0))"
-                              "(lam (g (f a c) $0))"
-                              "(h (f a $0))"))
-    ;; two arguments, one of them a function
-    (check-agrees "two-args" '("(f (g x) (h y))" "(f (g z) (h w))"))
-    ;; a lambda inside the body, with a variable under it
-    (check-agrees "under-lam" '("(m (lam (p $0 q)) r)" "(m (lam (p $0 s)) r)"))
-    ;; nothing shared: no abstraction at all
-    (check-agrees "nothing" '("(a b)" "(c d)")))
-
-  ;; check-against-stitch : String (Listof String) String Natural Cost Cost -> Void
-  ;; The numbers on the right are transcribed from
-  ;;   stitch/target/release/compress data/basic/NAME.json --max-arity=2 --iterations=1
-  ;; so this ties micro to the real system and not just to mini.
-  (define (check-against-stitch name texts body arity utility final-cost)
-    (define programs (map parse texts))
-    (define micro (micro-search programs 2))
-    (check-not-false micro name)
-    (when micro
-      (define-values (rewritten _) (rewrite-corpus micro programs 'fn_0))
-      (check-equal? (canonical micro) (canonical (parse body)) (format "~a: body" name))
-      (check-equal? (pattern-arity micro) arity (format "~a: arity" name))
-      (check-equal? (abstraction-utility micro programs) utility
-                    (format "~a: utility" name))
-      (check-equal? (corpus-cost rewritten) final-cost
-                    (format "~a: final cost" name))))
-
-  (test-case "micro agrees with the real stitch binary"
-    (check-against-stitch "simple1" '("(a a a)" "(b b b)")
-                          "(#0 #0 #0)" 1 200 402)
-    (check-against-stitch "simple_hof" '("(a (lam ((a $0) (a $0))))"
-                                         "(a (lam (($0 b) ($0 b))))")
-                          "(#0 #0)" 1 201 808)
-    (check-against-stitch "identical" '("(a b c d e)" "(a b c d e)")
-                          "(a b c d e)" 0 304 200)
-    (check-against-stitch "ctx_thread_1"
-                          '("(A (lam (lam (+ (a b c $0 f) (a b c $0 f)))))"
-                            "(A (lam (lam (+ (a b z $0 f) (a b z $0 f)))))")
-                          "(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))" 1 1011 806)
-    (check-against-stitch "hof"
-                          '("(lam (app (app cons (app inc $0)) (app (app cons (app inc $0)) empty)))"
-                            "(lam (app (app cons (app dec $0)) (app (app cons (app dec $0)) empty)))"
-                            "(lam (app (app cons (app (app plus $0) $0)) (app (app cons (app (app plus $0) $0)) empty)))")
-                          "(app (app cons (app #1 #0)) (app (app cons (app #1 #0)) empty))"
-                          2 2320 1111))
-
-  (test-case "two iterations, against the real stitch binary"
-    ;; compress data/basic/ctx_thread_1.json --max-arity=2 --iterations=2 reports
-    ;;   fn_0 arity 1 utility 1011 body (A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))
-    ;;   fn_1 arity 1 utility  101 body (fn_0 (a b #0))
-    ;;   original_cost 2426  final_cost 402
-    ;; Learning the second abstraction means searching the corpus the first one
-    ;; rewrote, so this exercises the rewriter's output, not just its cost.
-    (define steps
-      (micro-compress '("(A (lam (lam (+ (a b c $0 f) (a b c $0 f)))))"
-                        "(A (lam (lam (+ (a b z $0 f) (a b z $0 f)))))")
-                      2 2))
-    (check-equal? (map learned-body steps)
-                  '("(A (lam (lam (+ (#0 $0 f) (#0 $0 f)))))" "(fn_0 (a b #0))"))
-    (check-equal? (map learned-arity steps) '(1 1))
-    (check-equal? (map learned-utility steps) '(1011 101))
-    (check-equal? (map learned-final-cost steps) '(806 402))
-    (check-equal? (map term->string (learned-programs (last steps)))
-                  '("(fn_1 c)" "(fn_1 z)")))
-
-  (test-case "where micro and stitch genuinely disagree, and why"
-    ;; This is the one class of corpus on which micro's answer differs from
-    ;; mini's -- and micro is the one that is right.  Real stitch says so
-    ;; itself: on this corpus
-    ;;
-    ;;   stitch/target/release/compress FILE --max-arity=1 --iterations=1
-    ;;
-    ;; aborts on its own rewrite cost-mismatch assertion (rewriting.rs:145),
-    ;;
-    ;;   (#0 #0): ... finished: utility=605, compressive_utility=606, arity=1
-    ;;     left: 705   right: 604
-    ;;
-    ;; where `left` is what stitch's own rewriter actually produced -- exactly
-    ;; the 705 micro computes below -- and `right` is what its analytic utility
-    ;; predicted.
-    ;;
-    ;; What goes wrong is the multiuse bonus meeting nested matches.  The first
-    ;; program is X = (Y Y) with Y = (Z Z) and Z = (a a), so (#0 #0) matches at
-    ;; X, at both copies of Y, and at all four copies of Z.  stitch credits Y's
-    ;; saving twice, once per occurrence.  But rewriting X to (fn_0 Y) is
-    ;; precisely the move that *deletes* one of the two copies of Y, so only one
-    ;; of them is ever rewritten.  stitch's self-overlap correction does not
-    ;; catch it, because it deliberately ignores overlaps that land at an
-    ;; argument position -- the rewriter does descend into arguments, and
-    ;; normally that is right; what it misses is that a multiply-used variable
-    ;; keeps only one of them.
-    ;;
-    ;; micro cannot make this mistake, because it does not predict the saving:
-    ;; it rewrites the corpus and weighs the result.
-    (define programs (map parse '("(((a a) (a a)) ((a a) (a a)))" "((a f) (a f))")))
-    (define body (parse "(#0 #0)"))
-    (define-values (rewritten predicted) (rewrite-corpus body programs 'fn_0))
-    (check-equal? (map term->string rewritten)
-                  '("(fn_0 (fn_0 (a a)))" "(fn_0 (a f))"))
-    (check-equal? (corpus-cost programs) 1210)
-    (check-equal? (corpus-cost rewritten) 705)     ; stitch's own `left: 705`
-    (check-equal? predicted 705)
-    (check-equal? (abstraction-utility body programs) 504)
-    ;; and that really is the best (#0 #0) can do here, so micro picks it
-    (check-equal? (term->string (micro-search programs 1)) "(#0 #0)")
-    ;; mini reproduces stitch's number, over-counting one copy of Y by 101
-    (check-equal? (mini:abstraction-utility
-                   (mini:search (corpus-from-programs
-                                 '("(((a a) (a a)) ((a a) (a a)))" "((a f) (a f))"))
-                                1))
-                  605))
-
-  (test-case "micro agrees with mini across two iterations"
-    ;; The second iteration learns from the corpus the first one rewrote, so
-    ;; feeding micro's rewritten programs to mini checks the rewriter too.
-    (define texts '("(f (g a) (g a))" "(f (g b) (g b))" "(k (g a))"))
-    (define steps (micro-compress texts 2 2))
-    (check-equal? (length steps) 2)
-    (for ([step (in-list steps)] [k (in-naturals)])
-      (printf "  iteration ~a: ~a  utility ~a  cost ~a\n"
-              k (learned-body step) (learned-utility step) (learned-final-cost step)))
-    ;; each iteration's answer must be the one mini would have found on the
-    ;; corpus that iteration started from
-    (for/fold ([texts texts]) ([step (in-list steps)])
-      (define mini (mini:search (corpus-from-programs texts) 2))
-      (check-not-false mini)
-      (when mini
-        (check-equal? (learned-utility step) (mini:abstraction-utility mini))
-        (check-equal? (learned-compressive step) (mini:abstraction-compressive mini)))
-      (map term->string (learned-programs step)))
-    (void)))

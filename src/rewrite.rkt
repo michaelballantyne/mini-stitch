@@ -12,6 +12,19 @@
 ;; stand for, rewritten in turn -- a match sitting inside an argument is still
 ;; rewritten.
 ;;
+;; WHAT WE DO DIFFERENTLY FROM micro.rkt
+;;
+;; micro.rkt's `rewrite-corpus` is the accept/reject dynamic program *and* the
+;; rewriter at once, and its answer is the definition of utility.  Here the two
+;; halves are split across modules: search.rkt has already decided, analytically,
+;; which locations are worth rewriting and what the result will cost, so this
+;; module only carries the decisions out.  That is why it consults the
+;; abstraction's `used` list instead of re-deciding anything, and why the
+;; agreement of the two numbers at the end is an assertion rather than a
+;; tautology.  The de Bruijn fixup micro does on the spot, by lifting each
+;; argument as it emits the call, is likewise precomputed here (expr.rkt's
+;; argument extraction records the shift) and replayed as a rule.
+;;
 ;; Two things make this more than a substitution:
 ;;
 ;; DE BRUIJN FIXUP.  An argument is *lifted*: in the original program it sat

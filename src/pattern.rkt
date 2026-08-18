@@ -24,6 +24,23 @@
 ;; search's vocabulary leaks in is that a Pattern carries its `body-utility`
 ;; and `upper-bound` fields along for the ride; the caller computes them.
 ;;
+;; WHAT WE DO DIFFERENTLY FROM micro.rkt
+;;
+;; micro.rkt's patterns are bare trees, and it finds out where one matches by
+;; structurally matching it against every subterm of every program -- the
+;; paper's LambdaUnify, run again from scratch for every candidate.  A Pattern
+;; here is a tree *plus* the bookkeeping that makes expansion incremental: the
+;; paths of its holes, the paths where each abstraction variable is used, and
+;; the match locations themselves.  Expanding a hole filters the parent's
+;; locations rather than re-walking the corpus, which is sound because a child
+;; pattern's locations are always a subset of its parent's (the paper's Lemma
+;; 2), and the corpus is never walked again after the first pass.
+;;
+;; Self-overlap detection has no counterpart in micro.rkt at all.  micro scores
+;; a candidate by actually rewriting the corpus, so two overlapping uses simply
+;; cannot both happen; here utility is computed analytically before anything is
+;; rewritten, so the overlap has to be found and discounted by hand.
+;;
 ;; DATA DEFINITIONS
 ;;
 ;; A PatternTree is one of

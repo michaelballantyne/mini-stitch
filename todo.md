@@ -51,6 +51,15 @@ fused-lambda tags for simple3/4/5 coverage; more cogsci domains.
       micro then mini, with real measured numbers; anti-unification lens; coda
       on known divergences
 - [x] Final review pass; README
+- [x] Micro-first restructure (Michael's direction, 2026-08-18): micro made
+      fully standalone — new src/ast.rkt (shared AST + cost model), micro
+      scrubbed of mini references and of parsing/printing, examples as AST
+      values, comparisons moved to tests/micro-test.rkt + tests/support.rkt,
+      paper relationship stated precisely (implements the paper's OBJECTIVE
+      via its discarded "naive approach", NOT Algorithm 1). See
+      notes/2026-08-18-0246-micro-first-restructure.md.
+- [ ] Second adversarial review (Opus) of the restructure, focused on the
+      micro/paper relationship framing
 - [x] Adversarial review (Fable subagent) — notes/2026-08-17-2110; all
       findings fixed: walkthrough section 6 lgg claim corrected, penalty
       divergence signposted, README overclaim fixed, tie enforcement made

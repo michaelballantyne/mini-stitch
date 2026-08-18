@@ -4,9 +4,17 @@
 ;; expr.rkt --- the corpus of mini-stitch
 ;; ---------------------------------------------------------------------------
 ;;
-;; Everything in mini-stitch happens against one shared, hash-consed *corpus*:
-;; a single arena holding every subtree of every program exactly once.  This
-;; module owns that arena.  It knows how to
+;; This module begins mini-stitch, which computes exactly what micro.rkt
+;; computes -- the abstraction that compresses a corpus most -- but fast enough
+;; to run on real corpora.  The language is the same one (ast.rkt); the
+;; representation is not.  micro.rkt keeps each program as an ordinary immutable
+;; tree and asks whether two subtrees agree with `equal?`.  mini-stitch instead
+;; stores every subtree of every program exactly once, in a single hash-consed
+;; arena, so that subtree equality is integer `=` and one step of the search can
+;; advance every occurrence of a subtree at once.
+;;
+;; Everything in mini-stitch therefore happens against one shared, hash-consed
+;; *corpus*.  This module owns that arena.  It knows how to
 ;;
 ;;   * build it (parse s-expression programs into it, interning as it goes),
 ;;   * print any node back out in stitch's own syntax,
@@ -20,20 +28,12 @@
 ;;
 ;; DATA DEFINITIONS
 ;;
-;; A Node is one of
-;;   (prim s)     a DSL primitive named by the symbol s ("+", "cons", "3", ...)
-;;   (var i)      a de Bruijn variable, written $i in the surface syntax; i >= 0
-;;                counts binders outward from the variable, so $0 is the
-;;                innermost enclosing lambda
-;;   (ivar i)     an abstraction variable, written #i.  Parsed programs never
-;;                contain these.  They show up in two places: in the body of a
-;;                learned abstraction, and as the *sentinel* marker that
-;;                argument extraction leaves behind (see below)
-;;   (app f x)    an application; f and x are Idx
-;;   (lam b)      a lambda; b is an Idx
-;;
-;; Applications are binary and curried: the surface form (a b c) denotes
-;; ((a b) c).  There is no n-ary application node.
+;; A Node is ast.rkt's, with Idx children: (prim s), (var i), (ivar i),
+;; (app f x) with f and x Idxs, and (lam b) with b an Idx.  Two notes on the
+;; ivar case, which is the one this module leans on hardest: parsed programs
+;; never contain an abstraction variable, and this module puts them to a second
+;; use as the *sentinel* marker that argument extraction leaves behind (see
+;; below).
 ;;
 ;; An Idx is a natural number: the position of a Node in the corpus arena.
 ;; The arena is append-only and *child-first*: a node's children always have
@@ -85,15 +85,13 @@
 ;; simple4, simple5) and are therefore out of reach until tags are added back.
 ;; ---------------------------------------------------------------------------
 
-(require data/gvector
+(require "ast.rkt"
+         data/gvector
          racket/set)
 
 (provide
- ;; cost model constants
- COST-APP COST-LAM COST-VAR COST-IVAR COST-PRIM COST-NEW-PRIM
- ;; nodes
- (struct-out prim) (struct-out var) (struct-out ivar)
- (struct-out app) (struct-out lam)
+ ;; the language and the cost model, passed straight through
+ (all-from-out "ast.rkt")
  node-children
  ;; corpus
  corpus?
@@ -111,32 +109,12 @@
 (module+ test (require rackunit))
 
 ;; ---------------------------------------------------------------------------
-;; Cost model
-;; ---------------------------------------------------------------------------
-
-;; stitch's default (dreamcoder) cost model: structure is nearly free, leaves
-;; are expensive.  compression.rs:367-430, lambdas expr.rs:560-569.
-(define COST-APP 1)
-(define COST-LAM 1)
-(define COST-VAR 100)
-(define COST-IVAR 100)
-(define COST-PRIM 100)
-
-;; The name of a freshly invented abstraction is a primitive like any other, so
-;; it costs the same (`compute_cost_new_prim`, lambdas expr.rs:555-558).
-(define COST-NEW-PRIM COST-PRIM)
-
-;; ---------------------------------------------------------------------------
 ;; Nodes
 ;; ---------------------------------------------------------------------------
-
-;; Transparent structs so that equal? and equal-hash-code are structural --
-;; that is what makes the intern table work.
-(struct prim (name) #:transparent)   ; Symbol
-(struct var  (i)    #:transparent)   ; Natural
-(struct ivar (i)    #:transparent)   ; Natural
-(struct app  (fun arg) #:transparent) ; Idx Idx
-(struct lam  (body) #:transparent)   ; Idx
+;;
+;; The node structs and the cost constants come from ast.rkt.  They are
+;; transparent, so `equal?` and `equal-hash-code` on them are structural -- which
+;; is what makes the intern table below work.
 
 ;; node-children : Node -> (Listof Idx)
 ;; The Idxs this node points at, left to right.

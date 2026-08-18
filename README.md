@@ -24,13 +24,17 @@ Section 2 running example end to end through both implementations.
 ## Layout
 
 ```
-src/micro.rkt       micro-stitch: the executable SPECIFICATION. Naive
-                    enumeration, matching from scratch, utility computed by
-                    actually rewriting the corpus. Slow on purpose, readable.
-src/expr.rkt        mini-stitch: the hash-consed corpus arena, parser/printer,
-                    the bottom-up analyses (cost, free vars, occurrence counts,
-                    program sets), and argument extraction with de Bruijn
-                    shifting and capture sentinels
+src/ast.rkt         the shared language: the lambda-calculus AST structs and
+                    stitch's cost model. Read this first (one minute).
+src/micro.rkt       micro-stitch: the executable SPECIFICATION, standalone.
+                    Naive enumeration, matching from scratch, utility computed
+                    by actually rewriting the corpus. Slow on purpose,
+                    readable. Read this second.
+
+src/expr.rkt        mini-stitch begins here: the hash-consed corpus arena,
+                    parser/printer, the bottom-up analyses (cost, free vars,
+                    occurrence counts, program sets), and argument extraction
+                    with de Bruijn shifting and capture sentinels
 src/pattern.rkt     partial abstractions: trees with holes, hole paths,
                     expansion, self-overlap detection
 src/search.rkt      branch and bound: the upper bound, the prunings, the
@@ -39,6 +43,9 @@ src/rewrite.rkt     greedy top-down rewriting with de Bruijn shift rules, plus
                     the cost-mismatch oracle
 src/compress.rkt    the iteration loop, JSON I/O, command-line entry point
 
+tests/support.rkt   string<->AST bridges and helpers for the test files
+tests/micro-test.rkt     holds micro and mini to the same answers, and both
+                    to the real binary
 tests/differential.rkt   runs mini-stitch and the real binary on the same
                     corpora and compares; unit tests live in `module+ test`
                     blocks beside the code they test
@@ -52,12 +59,14 @@ walkthrough.md      the worked example: micro first, then mini
 todo.md             the plan
 ```
 
-micro and mini are two implementations of the same specification. micro says
-what the answer *is*; mini computes the same answer fast, matching real stitch
-answer for answer — same abstractions, utilities, costs, and rewritten
+micro and mini are two implementations of the same specification, sharing only
+the AST and cost model (`src/ast.rkt`). micro is written to be read on its own,
+with no reference to mini; it says what the answer *is*. mini computes the same
+answer fast (held to micro's answers by `tests/micro-test.rkt`), matching real
+stitch answer for answer — same abstractions, utilities, costs, and rewritten
 programs on the default configuration — though not step for step: the
 worklists differ, which is visible exactly once, as a documented equal-utility
-tie. They share only the parser and printer.
+tie.
 
 ## Quickstart
 
@@ -83,7 +92,7 @@ cd stitch && cargo build --release
 
 ## Results
 
-`raco test src/ tests/` — 81 test cases, all passing, including:
+`raco test src/ tests/` — 83 test cases, all passing, including:
 
 * **87 differential runs**: 21 corpora of `stitch/data/basic` × {max-arity 2, 3}
   × {1, 3 iterations}, plus `cogsci/nuts-bolts.json` (250 programs, arity 2, 3
