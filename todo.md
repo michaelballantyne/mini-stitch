@@ -100,12 +100,36 @@ means replacing a subexpression by a call that hygienically expands back.
       expand-and-alpha-compare assert after every rewrite. Iteration works
       over corpora containing earlier macros' calls; learned names are
       withheld from templates (no macros expanding to macro calls).
-- [ ] The note's V2: pattern variables in binder positions (my-lambda-style
+- [x] The note's V2: pattern variables in binder positions (my-lambda-style
       capture, hygienically) — enumeration + skeleton only; the oracle
-      already understands them.
-- [ ] North-star benchmark: learn for/set from expanded folds (needs V2).
-- [ ] Adversarial review + fuzz (skeleton/oracle agreement invariants,
-      e.g. hand-built matcher vs oracle once one exists).
-- [ ] Later rungs per the note: ellipses, literals lists, definition
-      contexts (where the alpha-style reasoning provably stops working —
-      pearl appendix B.1/B.2 as adversarial tests).
+      already understood them, verified empirically before implementing.
+- [x] North-star benchmark: learn for/set from expanded folds —
+      tests/for-set-test.rkt PASSES: exact recovery at arity 3 (~4 min of
+      naive search), H2-shadowed program refused byte-for-byte, utility
+      1111 hand-derived. Session log: notes/2026-08-18-0557.
+- [x] Fuzz: tests/macro-fuzz.rkt — corpus fuzz through macro-compress's
+      internal asserts, plus the inverse property (un-transcription
+      inverts transcription: a template must match back at the root of
+      its own call's expansion — catches silently LOST matches, which
+      corpus fuzzing can't see). No learner bugs; two generator-side
+      hygiene hazards found and documented in place.
+- [x] Pearl appendix B.1/B.2 checked in as expander tests (the boundary
+      where alpha-style hygiene accounts stop; future adversarial tests
+      for definition contexts).
+- [x] Related-work survey (notes/2026-08-18-0533): the intersection
+      "search-driven discovery of hygienic syntactic abstractions"
+      appears unoccupied; nearest are Macrofication (known-macro reverse
+      matching) and resugaring (known sugar); nominal anti-unification is
+      the formal vocabulary to borrow.
+- [ ] Adversarial review of V2 + new tests (cut when the 2026-08-18
+      session wrapped early; top of stack — reviewer bait listed in
+      notes/2026-08-18-0557).
+- [ ] Function-shaped classification (cheap): macros strictly dominate
+      functions under the compression objective, so report WHY each
+      learned template needed to be a macro; later, learn functions AND
+      macros with define/letrec + the for/list-over-map layering
+      benchmark. Analysis: notes/2026-08-18-0539.
+- [ ] Later rungs per the notes: ellipses (gates everything about real
+      corpora), literals lists, Racket's own expander as the outermost
+      differential oracle, core-Racket then surface-Racket corpora,
+      definition contexts (B.1/B.2 as adversarial tests).
