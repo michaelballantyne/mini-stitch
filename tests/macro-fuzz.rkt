@@ -35,7 +35,12 @@
 ;; Drop either one and the property goes false in general -- e.g. transcribing
 ;; `(lambda (#0) (lambda (#1) (f #0)))` with args `a a` produces a site whose
 ;; inner binder captures what the template aimed the outer one at, and no
-;; un-transcription recovers that.
+;; un-transcription recovers that.  Stage 3 (notes/2026-08-18-1324-ellipses-
+;; design.md section 5's fuzzer bullet): a fraction of generated templates now
+;; carry the one allowed (ellip sub) as a plain form's last element, with a
+;; random-length (0-3, zero included) sequence of closed arguments for its
+;; (svar), so the same inverse property is now also exercised across
+;; ellipsis templates, not just flat ones.
 ;;
 ;;   raco test tests/macro-fuzz.rkt
 ;;   racket tests/macro-fuzz.rkt --trials 500 --property both [--seed 20260818]
@@ -44,6 +49,7 @@
 (require rackunit racket/list
          (only-in "../src/macro-micro.rkt"
                   pvar pvar? pvar-i tvar tvar? tvar-j mdef mdef-template
+                  ellip ellip? ellip-sub svar svar?
                   learned-macro learned-utility
                   template-arity expand-under valid-sites
                   macro-utility macro-compress))
@@ -382,8 +388,90 @@
     [(pair? binder-reusable) (pvar (rnd-choice rng binder-reusable))]
     [else (mint-tvar! tv-box)]))
 
+;; With this probability, a freshly-generated plain form becomes the
+;; template's one ellip (stage 3) -- see `gen-template`'s 'plain case below.
+;; ~25%, so most templates stay ellip-free (property 2's original ground)
+;; while a healthy minority exercise the new machinery.
+(define ELLIP-DENOM 4) ; 1-in-4 = 25%
+
+;; contains-svar? : Template -> Boolean
+;; A local stand-in for macro-micro.rkt's (unexported) template-has-svar?,
+;; used only by force-svar below.
+(define (contains-svar? t)
+  (cond [(svar? t) #t]
+        [(ellip? t) (contains-svar? (ellip-sub t))]
+        [(list? t) (ormap contains-svar? t)]
+        [else #f]))
+
+;; force-svar : Template -> Template
+;; If `t` already contains an (svar) anywhere, return it unchanged (the
+;; common case, given gen-ellip-sub's own per-leaf svar production below);
+;; otherwise force one in by replacing t's own first leaf -- structurally,
+;; recurse into a list's first element until a non-list is reached, and
+;; replace THAT with a bare (svar) -- with a bare (svar) itself if t was
+;; already a leaf (the depth-0 sub case, where there is nothing to recurse
+;; into).  A bare (svar) is itself a perfectly legal sub (macro-micro.rkt's
+;; own `(f (ellip (g (svar))))` benchmark has a one-node sub), so this
+;; always terminates in a legal result without ever retrying generation.
+;; Whatever leaf this discards -- a global, a literal, or a pvar/tvar
+;; reference -- simply never occurs in the FINISHED template:
+;; template-arity and renumber-template both walk the tree actually
+;; returned, never pv-box's own mint count, so a discarded pvar reference
+;; is invisible and harmless, exactly as an ordinary retry-until-lucky
+;; would also discard it.
+(define (force-svar t)
+  (cond [(contains-svar? t) t]
+        [(list? t) (cons (force-svar (car t)) (cdr t))]
+        [else (svar)]))
+
+;; gen-ellip-sub : Pseudo-Random-Generator Natural (Listof Natural)
+;;                 (Listof Natural) Box Natural Hash -> Template
+;; The restricted recursion for an ellip's sub (design note section 2 /
+;; module header): leaves and plain forms only -- no lambda/let (no binder
+;; forms to abstract inside a single iteration, per the note: "lambda/let
+;; have fixed shapes ... nothing variadic to abstract there") and no nested
+;; ellip (at most one per template, and this IS that one's own sub) -- plus
+;; one extra leaf production, (svar), that ordinary gen-template does not
+;; have.  `scope`/`pscope` are exactly the ones already in effect where the
+;; ellip sits: an ellip introduces no binder of its own (macro-micro.rkt's
+;; own hole-ellip-scope treats it the same way, passing scope through
+;; unchanged into sub), so both are simply threaded in as-is, never
+;; extended here.  A depth-0 (pvar) inside sub reuses the very same
+;; gen-expr-pvar as everywhere else in the template, on equal footing:
+;; nothing about being inside a sub changes its reasoning (the sub itself
+;; carries no pscope of its own to add), so an already-minted pvar may be
+;; reused here subject to its usual pscope-subset rule, and a pvar first
+;; minted HERE may just as well be reused outside sub later.
+(define (gen-ellip-sub rng depth scope pscope pv-box max-arity origin)
+  (define (leaf)
+    (define options (append '(global literal pvar svar) (if (pair? scope) '(tvar-ref) '())))
+    (case (rnd-choice rng options)
+      [(global) (rnd-choice rng GLOBALS)]
+      [(literal) (rnd-choice rng LITERALS)]
+      [(pvar) (gen-expr-pvar rng pv-box max-arity origin pscope)]
+      [(tvar-ref) (tvar (rnd-choice rng scope))]
+      [(svar) (svar)]))
+  (cond
+    [(<= depth 0) (leaf)]
+    [else
+     (case (rnd-choice rng '(leaf leaf plain))
+       [(leaf) (leaf)]
+       [(plain)
+        (define n (+ 2 (random 2 rng)))
+        (for/list ([_ (in-range n)])
+          (gen-ellip-sub rng (sub1 depth) scope pscope pv-box max-arity origin))])]))
+
+;; gen-ellip-sub! : Pseudo-Random-Generator Natural (Listof Natural)
+;;                  (Listof Natural) Box Natural Hash -> Template
+;; gen-ellip-sub, then force-svar -- guarantees the result contains at
+;; least one (svar), which is what macro-micro.rkt's finished?
+;; (template-ellipses-ok?) requires of every ellip's sub and what actually
+;; controls the splice's iteration count; nothing else could.
+(define (gen-ellip-sub! rng depth scope pscope pv-box max-arity origin)
+  (force-svar (gen-ellip-sub rng depth scope pscope pv-box max-arity origin)))
+
 ;; gen-template : ... Natural (Listof Natural) (Listof Natural) Box Box
-;;                Natural Hash -> Template
+;;                Natural Hash Box -> Template
 ;; A random finished template: expression positions hold globals, literals,
 ;; pattern variables, a reference to a template binder in `scope`, or (V2) a
 ;; reference to a binder-position pvar in `pscope`; plain forms have length
@@ -391,7 +479,17 @@
 ;; pvar, per gen-binder above.  Both `scope` and `pscope` mirror
 ;; macro-micro.rkt's hole-scope exactly, including for pvar binders: a let's
 ;; right-hand side does not see the let's own binder, tvar or pvar alike.
-(define (gen-template rng depth scope pscope pv-box tv-box max-arity origin)
+;; Stage 3 addition: `ellip-box`, a shared (Box Boolean) starting #f, is
+;; threaded into every recursive call so that at most one (ellip sub) is
+;; ever generated across the WHOLE template (design note's amendment: one
+;; ellip per template, not merely per form) -- see the 'plain case, the
+;; only place that ever sets it.  When a plain form under construction takes
+;; that branch, the ellip's own mint-time pscope is recorded in `origin`
+;; under the reserved key 'ellip-pscope (raw pvar indices, exactly like an
+;; expr-pvar's own mint-time pscope -- see mint-pvar! -- so build-args can
+;; later decide, via the identical F6a logic, which binder-pvar names a
+;; sequence argument may reference).
+(define (gen-template rng depth scope pscope pv-box tv-box max-arity origin ellip-box)
   (define (leaf)
     (define options (append '(global literal pvar) (if (pair? scope) '(tvar-ref) '())))
     (case (rnd-choice rng options)
@@ -406,20 +504,32 @@
        [(leaf) (leaf)]
        [(plain)
         (define n (+ 2 (random 2 rng)))
-        (for/list ([_ (in-range n)])
-          (gen-template rng (sub1 depth) scope pscope pv-box tv-box max-arity origin))]
+        (define want-ellip?
+          (and (not (unbox ellip-box)) (zero? (random ELLIP-DENOM rng))))
+        (cond
+          [want-ellip?
+           (set-box! ellip-box #t)
+           (hash-set! origin 'ellip-pscope pscope)
+           (define prefix
+             (for/list ([_ (in-range (sub1 n))])
+               (gen-template rng (sub1 depth) scope pscope pv-box tv-box max-arity origin ellip-box)))
+           (define sub (gen-ellip-sub! rng (sub1 depth) scope pscope pv-box max-arity origin))
+           (append prefix (list (ellip sub)))]
+          [else
+           (for/list ([_ (in-range n)])
+             (gen-template rng (sub1 depth) scope pscope pv-box tv-box max-arity origin ellip-box))])]
        [(lambda)
         (define binder (gen-binder rng pv-box tv-box max-arity origin))
         (define scope^ (if (tvar? binder) (cons (tvar-j binder) scope) scope))
         (define pscope^ (if (pvar? binder) (cons (pvar-i binder) pscope) pscope))
         `(lambda (,binder)
-           ,(gen-template rng (sub1 depth) scope^ pscope^ pv-box tv-box max-arity origin))]
+           ,(gen-template rng (sub1 depth) scope^ pscope^ pv-box tv-box max-arity origin ellip-box))]
        [(let)
         (define binder (gen-binder rng pv-box tv-box max-arity origin))
-        (define rhs (gen-template rng (sub1 depth) scope pscope pv-box tv-box max-arity origin))
+        (define rhs (gen-template rng (sub1 depth) scope pscope pv-box tv-box max-arity origin ellip-box))
         (define scope^ (if (tvar? binder) (cons (tvar-j binder) scope) scope))
         (define pscope^ (if (pvar? binder) (cons (pvar-i binder) pscope) pscope))
-        (define body (gen-template rng (sub1 depth) scope^ pscope^ pv-box tv-box max-arity origin))
+        (define body (gen-template rng (sub1 depth) scope^ pscope^ pv-box tv-box max-arity origin ellip-box))
         `(let ([,binder ,rhs]) ,body)])]))
 
 ;; renumber-template : Template Hash -> (values Template Hash)
@@ -433,7 +543,15 @@
 ;; pscope) and that decision must survive renumbering.  A pscope list is
 ;; itself a list of raw pvar indices, so remapping an 'expr entry recurses
 ;; remap-pvar over it too -- safe (no cycle) because a pvar can never be a
-;; member of its own pscope.
+;; member of its own pscope.  Stage 3: `walk` now also recurses into an
+;; ellip's sub (an ellip struct is not itself a list, so the plain `list?`
+;; case never used to see inside it -- harmless before stage 2 could ever
+;; produce one, a live bug once it can); and if `origin` carries the
+;; reserved 'ellip-pscope key (the ellip's own mint-time pscope, set by
+;; gen-template), it is remapped too, AFTER the walk -- every raw index it
+;; names is a binder-pvar that necessarily occurs as an actual binder node
+;; somewhere structurally enclosing the ellip, hence already visited (and
+;; so already in pvar-map) by the time the walk itself is done.
 (define (renumber-template tpl origin)
   (define pvar-map (make-hash))
   (define tvar-map (make-hash))
@@ -458,19 +576,27 @@
     (cond
       [(pvar? t) (pvar (remap-pvar (pvar-i t)))]
       [(tvar? t) (tvar (remap-tvar (tvar-j t)))]
+      [(ellip? t) (ellip (walk (ellip-sub t)))]
       [(list? t) (map walk t)]
       [else t]))
-  (values (walk tpl) new-origin))
+  (define result (walk tpl))
+  (when (hash-has-key? origin 'ellip-pscope)
+    (hash-set! new-origin 'ellip-pscope (map remap-pvar (hash-ref origin 'ellip-pscope))))
+  (values result new-origin))
 
 ;; random-finished-template : Pseudo-Random-Generator -> (values Template Hash)
 ;; Retries until the result is not a bare pattern variable (the identity
 ;; macro, which template-arity and the real search both refuse to consider).
+;; `ellip-box` (stage 3) starts fresh #f on every attempt, exactly like
+;; pv-box/tv-box/origin -- a retry must not carry over "this template
+;; already used its one ellip" from a discarded attempt.
 (define (random-finished-template rng)
   (let loop ()
     (define origin (make-hash))
     (define pv-box (box 0))
     (define tv-box (box 0))
-    (define raw (gen-template rng TPL-DEPTH '() '() pv-box tv-box TPL-MAX-ARITY origin))
+    (define ellip-box (box #f))
+    (define raw (gen-template rng TPL-DEPTH '() '() pv-box tv-box TPL-MAX-ARITY origin ellip-box))
     (define-values (tpl new-origin) (renumber-template raw origin))
     (if (pvar? tpl) (loop) (values tpl new-origin))))
 
@@ -536,6 +662,28 @@
       [_ (void)]))
   counts)
 
+;; pvars-outside-ellip : Template -> (Listof Natural)
+;; Pattern-variable indices occurring somewhere in `t` OUTSIDE every ellip's
+;; sub (duplicates allowed -- callers only care about membership).  Exists
+;; for exactly one reason (see build-args's "needs-iteration?" below): a
+;; depth-0 pvar whose ONLY occurrence in the whole template is inside an
+;; ellip's sub is never bound by skeleton-match when that ellip matches
+;; ZERO elements at a site -- sub is simply never walked against anything
+;; then, so that index never enters the matcher's `binds` hash at all (see
+;; macro-micro.rkt's skeleton-match docstring/comment on this exact point,
+;; and its own "no zero-th occurrence to fall back on" remark) -- and
+;; skeleton-match soundly treats that as NO MATCH rather than guess.  A
+;; pvar that ALSO occurs outside sub is never at risk regardless of
+;; iteration count: skeleton-match's global first-occurrence rule binds it
+;; from whichever occurrence walk actually reaches first, prefix or
+;; sibling, so zero sub iterations just means that outside occurrence
+;; becomes the (only) one visited.
+(define (pvars-outside-ellip t)
+  (cond [(pvar? t) (list (pvar-i t))]
+        [(ellip? t) '()] ; do not look inside sub
+        [(list? t) (append-map pvars-outside-ellip t)]
+        [else '()]))
+
 ;; build-args : Pseudo-Random-Generator Natural Hash Template -> (Listof Sexpr)
 ;; One argument per pattern-variable index, in order.  A pvar whose first
 ;; occurrence is a binder position gets a bare symbol (so every binder
@@ -574,10 +722,34 @@
 ;; accident manufactured purely by this generator's naming, not by anything
 ;; macro-micro.rkt does (caught by an earlier version of this generator,
 ;; which drew names independently).
+;;
+;; Stage 3: when `tpl` contains an ellip (recorded by gen-template as the
+;; 'ellip-pscope key in `origin`), a random-length sequence of TRAILING
+;; arguments is appended after the fixed pvar arguments -- these are the
+;; (mfz e1 .. earity s1 .. sn) call's s1..sn, i.e. the %xs VALUES
+;; themselves that svar receives each iteration, NOT the transcribed (sub
+;; with svar := si) elements the expanded site will actually contain (the
+;; expander builds those, one per si, when it expands the call).  Each si
+;; is an ordinary closed expression (random-closed-expr again), built with
+;; the SAME F6a treatment as an expr-pvar's own argument just above and for
+;; the identical reason: it may reference a binder-pvar name recorded in
+;; the ellip's own mint-time pscope, restricted to names occurring EXACTLY
+;; ONCE as a binder (binder-pvar-counts) -- the ellip's pscope plays
+;; exactly the role a single expr-pvar's own mint-time pscope plays above,
+;; just shared across every si instead of being scoped per-pvar.
+;;
+;; The length is 0-3 -- zero deliberately included, since syntax-rules and
+;; the expander both treat zero iterations as perfectly legal -- EXCEPT
+;; when `pvars-outside-ellip` reports some pvar index in 0..arity-1 as
+;; occurring ONLY inside this ellip's sub: zero iterations would then leave
+;; skeleton-match unable to bind that index at all (see that function's
+;; docstring), which is a real, DOCUMENTED limitation of skeleton-match
+;; itself, not a bug -- so length is instead drawn from 1-3 whenever that
+;; situation applies, guaranteeing sub gets walked at least once.
 (define (build-args rng arity origin tpl)
   (define binder-names (shuffle-by rng '(a b c q)))
   (define reused (binder-pvar-counts tpl))
-  (define-values (out _pool _assigned)
+  (define-values (out _pool assigned)
     (for/fold ([out '()] [pool binder-names] [assigned (hash)])
               ([i (in-range arity)])
       (define entry (hash-ref origin i))
@@ -590,7 +762,18 @@
            (filter-map (lambda (j) (and (= (hash-ref reused j 0) 1) (hash-ref assigned j #f)))
                        (cdr entry)))
          (values (cons (random-closed-expr rng ARG-DEPTH in-scope) out) pool assigned)])))
-  (reverse out))
+  (define pvar-args (reverse out))
+  (define seq-args
+    (if (hash-has-key? origin 'ellip-pscope)
+        (let* ([ellip-in-scope
+                (filter-map (lambda (j) (and (= (hash-ref reused j 0) 1) (hash-ref assigned j #f)))
+                            (hash-ref origin 'ellip-pscope))]
+               [outside (pvars-outside-ellip tpl)]
+               [needs-iteration? (for/or ([i (in-range arity)]) (not (memv i outside)))]
+               [n (if needs-iteration? (add1 (random 3 rng)) (random 4 rng))]) ; see docstring
+          (for/list ([_ (in-range n)]) (random-closed-expr rng ARG-DEPTH ellip-in-scope)))
+        '()))
+  (append pvar-args seq-args))
 
 ;; shuffle-by : Pseudo-Random-Generator (Listof X) -> (Listof X)
 (define (shuffle-by rng lst)
@@ -607,10 +790,16 @@
 ;; call to manufacture a genuine site, and check that the SAME template
 ;; matches back at that site's root -- and (F16c) that what comes back is
 ;; not just SOME argument but the RIGHT one:
-;;   * path-consistency, always: each recovered (path . arg) pair must
-;;     actually be what walking `site` by that path finds there -- i.e.
-;;     valid-sites's internal skeleton-match is reporting the site's own
-;;     structure back at us, not something else.
+;;   * count, when tpl has an ellip: valid-sites must recover exactly
+;;     arity + n entries, n being the sequence length build-args generated
+;;     (the zero-length case included -- an ellip matching zero elements is
+;;     just as much a legal match as any other, per the design note and
+;;     macro-micro.rkt's own skeleton-match docstring).
+;;   * path-consistency, always, for EVERY recovered entry (fixed pvar args
+;;     and, stage 3, trailing sequence args alike): each recovered
+;;     (path . arg) pair must actually be what walking `site` by that path
+;;     finds there -- i.e. valid-sites's internal skeleton-match is
+;;     reporting the site's own structure back at us, not something else.
 ;;   * for a binder-origin pvar, the recovered value must be a symbol (a
 ;;     binder position's argument is always the site's binder NAME).
 ;;   * for an expr-origin pvar whose built argument is CLOSED -- empty
@@ -620,6 +809,14 @@
 ;;     (An argument that DOES reference a binder name or contain a lambda
 ;;     gets hygienically renamed by expansion, so no such direct comparison
 ;;     is available for it; path-consistency above is what covers it.)
+;;   * (stage 3) for a sequence argument whose si was built with an EMPTY
+;;     in-scope name list (the ellip's own mint-time pscope was empty, so
+;;     F6a could not have referenced anything) and no lambda anywhere in it
+;;     (F6b introduced none), the identical equal? argument applies: si is
+;;     closed, so expansion cannot have changed it, exactly mirroring the
+;;     closed expr-pvar case just above -- the ellip's pscope plays the
+;;     role a single pvar's own mint-time pscope plays there, just shared
+;;     across every si rather than being per-argument.
 ;; Any exception (a malformed site, a crash inside valid-sites) is
 ;; re-raised with the template/args/site attached so a failing check prints
 ;; a reproducer.
@@ -629,6 +826,7 @@
      (define-values (tpl origin) (random-finished-template rng))
      (define arity (template-arity tpl))
      (define args (build-args rng arity origin tpl))
+     (define n (- (length args) arity)) ; sequence-arg count build-args generated (0 if no ellip)
      (with-handlers ([exn:fail?
                       (lambda (e)
                         (error 'macro-fuzz
@@ -642,30 +840,48 @@
                                "at the root of its own expansion\n"
                                "  template: ~s\n  args: ~s\n  site: ~s\n  expanded-site: ~s")
                 tpl args site expanded-site))
-       (for ([i (in-range arity)])
+       (unless (= (length result) (+ arity n))
+         (error 'macro-fuzz
+                (string-append "sequence-count mismatch: build-args generated ~a sequence "
+                               "argument(s), but valid-sites recovered ~a entries total for "
+                               "arity ~a\n  template: ~s\n  args: ~s\n  site: ~s")
+                n (length result) arity tpl args site))
+       (for ([i (in-range (length result))])
          (define pr (list-ref result i))
          (define path (car pr))
          (define recovered (cdr pr))
          (unless (equal? (walk-path site path) recovered)
            (error 'macro-fuzz
-                  (string-append "path-consistency failed at pvar ~a: path ~s in site ~s is "
-                                 "~s, but valid-sites recovered ~s\n  template: ~s\n  args: ~s")
+                  (string-append "path-consistency failed at result index ~a: path ~s in site "
+                                 "~s is ~s, but valid-sites recovered ~s\n  template: ~s\n  args: ~s")
                   i path site (walk-path site path) recovered tpl args))
-         (define entry (hash-ref origin i))
-         (case (car entry)
-           [(binder)
-            (unless (symbol? recovered)
-              (error 'macro-fuzz
-                     "binder-origin pvar ~a recovered non-symbol ~s\n  template: ~s\n  args: ~s"
-                     i recovered tpl args))]
-           [(expr)
-            (define built (list-ref args i))
-            (when (and (null? (cdr entry)) (not (memq 'lambda (flatten built))))
-              (unless (equal? recovered built)
+         (cond
+           [(< i arity)
+            (define entry (hash-ref origin i))
+            (case (car entry)
+              [(binder)
+               (unless (symbol? recovered)
+                 (error 'macro-fuzz
+                        "binder-origin pvar ~a recovered non-symbol ~s\n  template: ~s\n  args: ~s"
+                        i recovered tpl args))]
+              [(expr)
+               (define built (list-ref args i))
+               (when (and (null? (cdr entry)) (not (memq 'lambda (flatten built))))
+                 (unless (equal? recovered built)
+                   (error 'macro-fuzz
+                          (string-append "closed expr-origin pvar ~a: recovered ~s does not "
+                                         "match the built argument ~s\n  template: ~s\n  args: ~s")
+                          i recovered built tpl args)))])]
+           [else
+            ;; a sequence (svar) argument -- (- i arity) is which one, in order
+            (define si (list-ref args i))
+            (define ellip-pscope (hash-ref origin 'ellip-pscope '()))
+            (when (and (null? ellip-pscope) (not (memq 'lambda (flatten si))))
+              (unless (equal? recovered si)
                 (error 'macro-fuzz
-                       (string-append "closed expr-origin pvar ~a: recovered ~s does not match "
-                                      "the built argument ~s\n  template: ~s\n  args: ~s")
-                       i recovered built tpl args)))]))))))
+                       (string-append "closed sequence arg ~a: recovered ~s does not match the "
+                                      "built argument ~s\n  template: ~s\n  args: ~s")
+                       (- i arity) recovered si tpl args)))]))))))
 
 ;; fuzz-templates : Natural Natural -> Void
 (define (fuzz-templates trials seed)
