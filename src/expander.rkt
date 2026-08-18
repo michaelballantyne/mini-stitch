@@ -408,4 +408,42 @@
    (expand
     '(let-syntax ([m (syntax-rules () [(_ a) (f a)])])
        (let ([f 1]) (m f))))
-   '(let ([f.1 1]) (f f.1))))
+   '(let ([f.1 1]) (f f.1)))
+
+  ;; The paper's appendix B boundary cases, kept as executable documentation:
+  ;; where alpha-renaming-style hygiene accounts (and the learner's H1-H4
+  ;; reading of hygiene) stop being the right kind of story, though the
+  ;; expander itself -- and the learner's expand-and-compare criterion --
+  ;; remain correct.  If the learner ever admits definition contexts, these
+  ;; two programs go straight into its adversarial test set.
+  ;;
+  ;; B.1: a use-site `define` binding CAN capture a macro-introduced
+  ;; reference, when the macro is used in the very definition context where
+  ;; it is defined.  The template's free `x` resolves to the binding that
+  ;; its own expansion contributed.
+  (check-equal?
+   (expand
+    '(block
+      (define-syntax define-and-ref-x
+        (syntax-rules () [(_ a) (begin (define a 5) x)]))
+      (define-and-ref-x x)))
+   '(block (begin) (begin (define x.1 5) x.1)))
+
+  ;; B.2: the referent of a transcribed free identifier may be determined
+  ;; only after transcription.  The template's free `x` resolves to the
+  ;; (define x 6) that the expander has not even reached yet -- not to the
+  ;; enclosing let's x.
+  (check-equal?
+   (expand
+    '(let ([x 5])
+       (block
+        (define-syntax m
+          (syntax-rules () [(_ a b) (define a (lambda (b) x))]))
+        (m f x)
+        (define x 6)
+        (f 7))))
+   '(let ([x.1 5])
+      (block (begin)
+             (define f.1 (lambda (x.3) x.2))
+             (define x.2 6)
+             (f.1 7)))))
