@@ -7,7 +7,9 @@ We can leave out of consideration:
  - Constant-factor improvements (e.g. using Rust vs a higher-level language)
 
 notes/ contains notes and reflections written by Claude or Codex, named with a <YYYY>-<MM>-<DD>-<TTTT>-<slug>.md format.
-stitch.pdf is the original stitch paper
+The stitch paper is "Top-Down Synthesis for Library Learning" (POPL 2023),
+https://arxiv.org/abs/2211.16605 (not checked in; keep a local copy as stitch.pdf,
+which is gitignored)
 stitch/ is a git submodule with the real stitch implementation
 todo.md contains the current plan
 
