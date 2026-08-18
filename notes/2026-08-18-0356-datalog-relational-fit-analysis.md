@@ -61,15 +61,19 @@ the two experiments were built independently and only compared afterwards.
    (up to free-var re-generalization) in 7/13; every gap is an *upward*
    merge (3 exact utility ties, 2 arity-cap artifacts, 1 genuinely better
    merge), never a specialization.
-5. **Reasons it may still not be a winner:** real stitch has no performance
-   pain to relieve at benchmark scale (milliseconds); utility scoring,
-   de Bruijn shifting, and the upward-merge phase all live in host code, so
-   the Datalog fraction shrinks toward "the joins"; and the sibling project
-   already measured where that road ends (parity, a memory tax, and engine
-   feature gaps). The distinctive upside is elsewhere: legibility, the
-   all-patterns-at-once bank, incremental maintenance across compression
-   iterations, and the babble-style equational variant where matching
-   really is e-matching.
+5. **Reasons it may still not be a winner:** real stitch has little
+   performance pain to relieve on the corpora mini-stitch targets (paper
+   §6.1: tens of milliseconds on the DreamCoder-trace corpora; Table 2:
+   0.24–2.8 s on the technical-drawing domains) — though see the
+   correction in §6: the paper's tower domains run 17–77 s at up to
+   ~0.7 GB, so a modest real-runtime regime does exist inside stitch's own
+   benchmarks. Utility scoring, de Bruijn shifting, and the upward-merge
+   phase all live in host code, so the Datalog fraction shrinks toward
+   "the joins"; and the sibling project already measured where that road
+   ends (parity, a memory tax, and engine feature gaps). The distinctive
+   upside is elsewhere: legibility, the all-patterns-at-once bank,
+   incremental maintenance across compression iterations, and the
+   babble-style equational variant where matching really is e-matching.
 
 ## 1. What stitch computes, seen relationally
 
@@ -343,15 +347,27 @@ sequential or arithmetic in Rust.
 
 ## 6. Reasons Datalog may not be a winner here
 
-1. **There is no performance pain to relieve.** Real stitch runs in
-   milliseconds-to-seconds on every published corpus and already beat the
-   prior art (DreamCoder's version-space compressor) by orders of
-   magnitude in time and memory; that efficiency problem was solved *by*
-   the top-down algorithm. mini-stitch, in unoptimized single-threaded
-   Racket, does nuts-bolts in ~1 s. A substrate can at best match this.
-   (The sibling project, by contrast, had hour-scale runs and OOM walls to
-   attack.) A relational library learner is a legibility/extension play,
-   not a rescue.
+1. **The performance pain is modest — but not zero.** CORRECTION
+   (2026-08-18, same day, after the project lead pointed back at the
+   paper): an earlier draft of this note claimed "milliseconds on every
+   published corpus," which conflated two very different scales.
+   The paper's §6.1 corpora (DreamCoder traces) do run in tens of
+   milliseconds, and the small Wong-et-al. domains — the ones mini-stitch
+   targets, nuts&bolts at 0.24 s / 11 MB — in single-digit seconds. But
+   Table 2's tower domains run **bridges ~17.6 s, cities ~50.7 s, castles
+   ~77.3 s at up to ~684 MB peak** (means over 50 seeded runs), and the
+   ablations show the search sits near a tractability cliff there: with
+   any essential pruning disabled, no Wong domain finishes within 90
+   minutes and 50 GB at arity 3. So stitch's own benchmarks do contain a
+   real-runtime regime (tens of seconds to minutes), it just isn't the
+   part mini-stitch replicated (bridge/city/house/castle are checked in
+   at `stitch/data/cogsci/` and unmeasured here so far — being measured
+   now, see `results-large.md` in the AU experiment folder). Still: the
+   prior art (DreamCoder's version-space compressor) is orders of
+   magnitude worse than stitch on all of these, so the top-down algorithm
+   remains the efficiency solution; the open question is only whether the
+   heavy tail is where a bottom-up formulation's different scaling could
+   show an advantage.
 2. **A faithful top-down encoding is advantage-free** (§2): no rendezvous,
    so the engine's differentiating services are idle, and the sibling
    project's measured endpoint for that situation is parity at a memory
@@ -427,6 +443,10 @@ patterns, extent-keyed lattices, AU-as-join) is a real and apparently
 viable alternative algorithm (measured: small space, winners reachable),
 is genuinely set-at-a-time, and is the version of the algorithm that
 generalizes — to equational matching, to k-best libraries, to incremental
-corpora. If the goal is a faster stitch, skip it. If the goal is
-understanding what library learning *is* as a set-at-a-time computation —
-this project's kind of goal — the AU formulation is worth building.
+corpora. If the goal is a faster stitch on the corpora measured above,
+skip it. Whether the heavy end of stitch's own benchmarks (the tower
+domains, 17–77 s at arity 3 — see the correction in §6) leaves room for a
+speed story is an open measurement, in progress. Independent of that: if
+the goal is understanding what library learning *is* as a set-at-a-time
+computation — this project's kind of goal — the AU formulation is worth
+building.
