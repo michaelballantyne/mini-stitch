@@ -13,11 +13,52 @@
 ;; compresses a corpus of s-expression programs the most, where "using" the
 ;; macro means replacing a subexpression by a call (m e1 ... ek) that would
 ;; EXPAND BACK to it?  Design: notes/2026-08-18-0323-syntax-rules-learning-
-;; design.md.  This file is the smallest version that note admits: expressions
-;; only, one rule, flat patterns, no ellipses; binder positions hold either an
-;; anonymous template binder or a pattern variable (the note's V2, notes/
-;; 2026-08-18-0323-syntax-rules-learning-design.md section 5 "V1 vs V2"); no
-;; optimizations of any kind.
+;; design.md.  This file started as the smallest version that note admits:
+;; expressions only, one rule, flat patterns, no ellipses; binder positions
+;; hold either an anonymous template binder or a pattern variable (the note's
+;; V2, notes/2026-08-18-0323-syntax-rules-learning-design.md section 5 "V1 vs
+;; V2"); no optimizations of any kind.  It now also admits stage 2: ELLIPSES,
+;; designed in notes/2026-08-18-1324-ellipses-design.md -- abstraction over
+;; arity, "the real prize" that note's section 0 names.
+;;
+;; THE ONE-ELLIPSIS-PER-TEMPLATE AMENDMENT
+;;
+;; The design note (section 2) allows at most one ellip per FORM and numbers
+;; its depth-1 pattern variable as the highest pvar index, forced last by
+;; construction -- workable, but it makes every piece of pvar-numbering code
+;; reason about an exception ("the last index might be special").  The
+;; session lead amended this before implementation: at most one ellipsis per
+;; TEMPLATE (not merely per form), and its depth-1 pattern variable is a
+;; DISTINCT NODE KIND -- (svar), a nullary struct -- never a numbered pvar at
+;; all.  This dissolves the numbering complication rather than working around
+;; it: pvars stay exactly what they were pre-ellipses (0..arity-1, ordinary
+;; per-call parameters), and the sequence variable is simply never one of
+;; them.  The consequence advertised in the amendment and realized below is
+;; that sequence arguments become ORDINARY TRAILING ENTRIES in the same
+;; (path . subterm) argument list every pre-ellipsis consumer already walks --
+;; site-valid?'s call-building, the rewriter's recursion, the DP's cost sum,
+;; and macro-utility all needed no changes at all, only doc-comment updates.
+;;
+;; DATA DEFINITIONS, ellipses
+;;
+;;   (ellip sub)  an element standing ONLY as the LAST element of a plain
+;;                (non-binding) form template, meaning `sub ...`: sub is
+;;                transcribed once per matched site element and spliced in.
+;;   (svar)       the sequence variable, occurring ONLY inside an ellip's
+;;                sub, one or more times; at least one occurrence is required
+;;                for the template to be FINISHED (it is what controls the
+;;                iteration count -- nothing else could).  Depth-0 (pvar i)
+;;                and (tvar j) references are also legal inside an ellip's
+;;                sub (repeated per iteration, freshened per iteration,
+;;                respectively) -- ellip does not create a new sublanguage,
+;;                it only adds one production directly usable in sub's holes.
+;;
+;; Restrictions kept from the design note's section 2 (their reasons there
+;; still apply verbatim): plain forms only (lambda/let have fixed shapes,
+;; nothing variadic to abstract); trailing position only; and -- now framed
+;; as "per template" rather than "per form, forced-last-index" -- exactly one
+;; ellip, so the learned PATTERN is always the flat prefix plus at most one
+;; trailing `xs ...`, never more.
 ;;
 ;; WHAT REPLACES BETA
 ;;
@@ -95,7 +136,10 @@
 ;;
 ;; A Cost is an integer: 100 per atom (symbols, numbers, booleans, and the
 ;; identifiers a tvar will become), 1 per parenthesized form, 0 per pvar --
-;; parameters are not structure.  The macro itself is charged for its
+;; parameters are not structure.  An (ellip sub) element costs 100 (the
+;; rendered `...` is an atom of the macro's source) plus sub's own cost; a
+;; (svar) costs 0, same reasoning as a pvar -- it too is a parameter, never
+;; structure.  The macro itself is charged for its
 ;; TEMPLATE only, mirroring stitch exactly: stitch's structure penalty is the
 ;; invention body at cost_{alpha=0} (ivars hardcoded to 0 in expansion.rs's
 ;; local_expansion_utility, whatever the inert cost_ivar config says), and
@@ -106,7 +150,8 @@
 
 (require (only-in "expander.rkt" expand))
 
-(provide (struct-out pvar) (struct-out tvar) (struct-out mdef)
+(provide (struct-out pvar) (struct-out tvar) (struct-out ellip) (struct-out svar)
+         (struct-out mdef)
          (struct-out learned)
          sexpr-cost corpus-cost template-arity macro-cost
          mdef-syntax-rules wrap-with-library expand-under
@@ -118,6 +163,11 @@
 
 (struct pvar (i) #:transparent)
 (struct tvar (j) #:transparent)
+;; ellip and svar are stage 2's addition -- see the module header below for
+;; the amendment that shapes them (one ellipsis per TEMPLATE, its sequence
+;; variable a distinct node kind rather than a numbered pvar).
+(struct ellip (sub) #:transparent)
+(struct svar () #:transparent)
 (struct mdef (name arity template) #:transparent)
 
 ;; ---------------------------------------------------------------------------
@@ -184,10 +234,16 @@
 ;; sexpr-cost : (U Sexpr Template) -> Cost
 ;; What a piece of syntax costs.  One function serves programs, arguments and
 ;; templates: a pvar is a parameter and costs nothing, a tvar will be an
-;; identifier in the rendered macro and costs like one.
+;; identifier in the rendered macro and costs like one; likewise (stage 2) a
+;; svar is a parameter and costs nothing, and an ellip costs its rendered
+;; `...` (100, an atom) plus whatever its sub costs -- ellip only ever
+;; appears as a LIST ELEMENT (never as the t passed in directly), which is
+;; exactly where the list case below calls sexpr-cost on it.
 (define (sexpr-cost t)
   (cond [(pvar? t) 0]
         [(tvar? t) 100]
+        [(svar? t) 0]
+        [(ellip? t) (+ 100 (sexpr-cost (ellip-sub t)))]
         [(list? t) (+ 1 (for/sum ([e (in-list t)]) (sexpr-cost e)))]
         [else 100]))
 
@@ -219,23 +275,63 @@
 
 ;; template-arity : Template -> Natural
 ;; Pattern variables are numbered 0, 1, ... in the order the search introduced
-;; them, so the largest index plus one is the count.
+;; them, so the largest index plus one is the count.  A pvar can stand inside
+;; an ellip's sub too (a depth-0 reference, repeated per iteration), so this
+;; walks into sub; svar itself contributes no pvar index.
 (define (template-arity t)
   (cond [(pvar? t) (add1 (pvar-i t))]
+        [(ellip? t) (template-arity (ellip-sub t))]
         [(list? t) (apply max 0 (map template-arity t))]
         [else 0]))
 
 ;; template-tvars : Template -> Natural
 ;; How many template binders exist so far (they are numbered like pvars).
+;; Walks into an ellip's sub for the same reason as template-arity.
 (define (template-tvars t)
   (cond [(tvar? t) (add1 (tvar-j t))]
+        [(ellip? t) (template-tvars (ellip-sub t))]
         [(list? t) (apply max 0 (map template-tvars t))]
         [else 0]))
+
+;; template-has-ellip? : Template -> Boolean
+;; Does this template already contain its one allowed ellip anywhere?  Used
+;; both to render the macro's pattern (mdef-syntax-rules) and to keep the
+;; enumerator from ever proposing a second one (see `expansions` below).
+(define (template-has-ellip? t)
+  (cond [(ellip? t) #t]
+        [(list? t) (ormap template-has-ellip? t)]
+        [else #f]))
+
+;; template-has-svar? : Template -> Boolean
+;; Does this (sub-)template already contain a sequence variable anywhere?
+;; Used to decide whether an ellip is finished, and whether the enumerator
+;; should still offer (svar) inside a given ellip's sub.
+(define (template-has-svar? t)
+  (cond [(svar? t) #t]
+        [(ellip? t) (template-has-svar? (ellip-sub t))]
+        [(list? t) (ormap template-has-svar? t)]
+        [else #f]))
+
+;; template-ellipses-ok? : Template -> Boolean
+;; True unless some ellip in the template has a sub with no (svar) inside it
+;; -- the note's "nothing controls the iteration" condition.  Checked here,
+;; at the enumerator's finished? gate, so the expander's own error for
+;; exactly this malformed case is never triggered by a template this search
+;; hands it (the design note's "errors kept honest" policy: the enumerator
+;; asserts, the expander still errors, but on candidates the enumerator was
+;; never supposed to produce).
+(define (template-ellipses-ok? t)
+  (cond [(ellip? t) (and (template-has-svar? (ellip-sub t))
+                         (template-ellipses-ok? (ellip-sub t)))]
+        [(list? t) (andmap template-ellipses-ok? t)]
+        [else #t]))
 
 ;; hole-scope : Template -> (U (Listof Natural) #f)
 ;; The template binders in scope at the leftmost hole -- what a reference
 ;; production may name there -- or #f if the template is finished.  A let's
 ;; right-hand side does not see the let's own binder, matching the expander.
+;; An ellip introduces no binder of its own, so scope passes through its sub
+;; unchanged -- it is walked into purely so a hole there is still found.
 (define (hole-scope tpl)
   ;; binder-scope : Sexpr (Listof Natural) -> (Listof Natural)
   ;; A binder-position tvar extends the tvar scope; a binder-position pvar
@@ -251,20 +347,57 @@
             [(let-form? t)
              (walk (cadr (caadr t)) scope)
              (walk (caddr t) (binder-scope (car (caadr t)) scope))]
+            [(ellip? t) (walk (ellip-sub t) scope)]
             [(list? t) (for ([e (in-list t)]) (walk e scope))]
             [else (void)]))
     #f))
 
+;; hole-ellip-scope : Template -> (U #f (cons Boolean Boolean))
+;; A SIBLING of hole-scope (design note section 4, as amended): what an
+;; ellip-aware production at the leftmost hole needs to know, that the tvar
+;; scope does not capture.  #f exactly when hole-scope is #f (the template is
+;; finished); otherwise (cons in-ellip? has-svar?) where in-ellip? says
+;; whether the leftmost hole sits inside some ellip's sub, and has-svar? --
+;; meaningful only when in-ellip? is true -- says whether that ellip's sub
+;; already contains an (svar) somewhere (before or after the hole; existence
+;; is all that matters).  `expansions` uses in-ellip? to withhold binder-form
+;; and nested-ellip productions and has-svar? to withhold a second (svar)
+;; production once the first is placed.  Kept as a separate walk rather than
+;; folded into hole-scope's return so hole-scope's existing contract (and
+;; every pre-ellipses caller and test of it) is untouched.
+(define (hole-ellip-scope tpl)
+  (let/ec found
+    (let walk ([t tpl] [in-ellip? #f] [has-svar? #f])
+      (cond [(eq? t 'hole) (found (cons in-ellip? has-svar?))]
+            [(lambda-form? t) (walk (caddr t) in-ellip? has-svar?)]
+            [(let-form? t)
+             (walk (cadr (caadr t)) in-ellip? has-svar?)
+             (walk (caddr t) in-ellip? has-svar?)]
+            [(ellip? t)
+             (walk (ellip-sub t) #t (template-has-svar? (ellip-sub t)))]
+            [(list? t) (for ([e (in-list t)]) (walk e in-ellip? has-svar?))]
+            [else (void)]))
+    #f))
+
 ;; finished? : Template -> Boolean
-(define (finished? tpl) (not (hole-scope tpl)))
+;; No hole left AND every ellip's sub has something controlling its
+;; iteration (template-ellipses-ok?) -- both conditions the note requires of
+;; a candidate before it may reach the oracle.
+(define (finished? tpl)
+  (and (not (hole-scope tpl)) (template-ellipses-ok? tpl)))
 
 ;; fill-hole : Template Template -> Template
 ;; Replace the leftmost hole by `piece`.  Purely structural: binder positions
-;; hold tvars, never holes, so a plain left-to-right walk is safe.
+;; hold tvars, never holes, so a plain left-to-right walk is safe.  An ellip
+;; is not itself a list (it is a one-field struct), so it needs its own case
+;; to be walked into; the result re-wraps a filled sub back in `ellip`.
 (define (fill-hole tpl piece)
   (define (walk t)
     (cond
       [(eq? t 'hole) (values piece #t)]
+      [(ellip? t)
+       (define-values (e filled?) (walk (ellip-sub t)))
+       (values (if filled? (ellip e) t) filled?)]
       [(list? t)
        (let loop ([done '()] [rest t])
          (cond [(null? rest) (values (reverse done) #f)]
@@ -285,20 +418,44 @@
 ;; free identifier would swallow it.  (Corpora are checked for %-free names.)
 (define (pvar-name i) (string->symbol (format "%x~a" i)))
 (define (tvar-name j) (string->symbol (format "%t~a" j)))
+;; svar-name : Symbol
+;; There is at most one svar per template, so unlike pvar/tvar it needs no
+;; index -- one reserved spelling suffices.  Still inside the %-namespace, so
+;; check-corpus's existing %-ban already protects it.
+(define svar-name '%xs)
 
 ;; render-template : Template -> Sexpr
-;; The template as it appears inside the macro definition.
+;; The template as it appears inside the macro definition.  An ellip element
+;; renders as TWO spliced elements -- its sub's rendering, then the literal
+;; symbol `...` -- so the list case can no longer be a plain `map`; it maps
+;; each element to the (one- or two-element) list it contributes and appends
+;; the results, splicing an ellip's pair into the enclosing form exactly the
+;; way syntax-rules notation itself reads.
 (define (render-template t)
   (cond [(pvar? t) (pvar-name (pvar-i t))]
         [(tvar? t) (tvar-name (tvar-j t))]
-        [(list? t) (map render-template t)]
+        [(svar? t) svar-name]
+        [(list? t)
+         (append-map (lambda (e)
+                       (if (ellip? e)
+                           (list (render-template (ellip-sub e)) '...)
+                           (list (render-template e))))
+                     t)]
         [else t]))
 
 ;; mdef-syntax-rules : MDef -> Sexpr
-;; The whole macro transformer, ready for let-syntax.
+;; The whole macro transformer, ready for let-syntax.  When the template
+;; contains an ellip, the learned pattern gains a trailing `%xs ...` after
+;; the flat prefix -- the one place the macro's ARITY (a count of pvars) and
+;; its pattern's shape now diverge, exactly the divergence
+;; template-has-ellip? exists to detect.
 (define (mdef-syntax-rules m)
+  (define fixed-pat (for/list ([i (in-range (mdef-arity m))]) (pvar-name i)))
+  (define pat (if (template-has-ellip? (mdef-template m))
+                  (append fixed-pat (list svar-name '...))
+                  fixed-pat))
   `(syntax-rules ()
-     [(_ ,@(for/list ([i (in-range (mdef-arity m))]) (pvar-name i)))
+     [(_ ,@pat)
       ,(render-template (mdef-template m))]))
 
 ;; macro-cost : Template -> Cost
@@ -338,9 +495,17 @@
 
 ;; skeleton-match : Template Sexpr -> (U #f (Listof (cons Path Sexpr)))
 ;; Does the template have the shape of this expression, and if so what does
-;; each pattern variable receive?  Returns one (path . argument) per pattern
-;; variable, in index order; the path is the FIRST occurrence's, and it is
-;; where the rewriter recurses.  Deliberately hygiene-blind:
+;; each pattern variable -- and (stage 2) each matched ellipsis element --
+;; receive?  Returns one (path . argument) per pattern variable, in index
+;; order, FOLLOWED BY one (path . argument) per matched ellipsis element, in
+;; site order (empty when the template has no ellip, or when it matched zero
+;; elements) -- the amendment's "beautiful consequence": a sequence argument
+;; is just an ordinary trailing entry in the same list, so every consumer of
+;; this return value (the call-builder in site-valid?, the rewriter's
+;; recursion, the DP's cost sum) needed no change at all, only this comment.
+;; A pvar's path is the FIRST occurrence's; a sequence element's path is the
+;; FIRST (svar) occurrence WITHIN THAT ELEMENT's match of the ellip's sub.
+;; Deliberately hygiene-blind:
 ;;   * a tvar in binder position matches whatever name the site binds there,
 ;;     recording nothing;
 ;;   * a pvar in binder position (V2) is matched by the SAME first-occurrence
@@ -353,14 +518,33 @@
 ;;     recorded at the first occurrence to be a symbol (a compound argument
 ;;     can never legally stand as a binder's name, whichever position it was
 ;;     first read from);
-;; every one of those judgments -- except that one -- is deferred to the
-;; expansion oracle.  Only shape is settled here -- in particular a binding
-;; form only matches a template written with that binding form, holes stand
-;; at expression positions and nothing else, and a binder position holding
-;; anything but a tvar or a pvar (an ill-formed corpus's doing, never the
-;; enumerator's) is simply no match.
+;;   * (stage 2) when a template's last element is (ellip sub), a site plain
+;;     form of length >= k-1 (k-1 fixed elements before the ellip) matches:
+;;     the prefix positionally as always, then EACH remaining site element
+;;     independently against sub (zero remaining elements is a legal match,
+;;     contributing no sequence arguments -- syntax-rules agrees, and so does
+;;     the expander for zero iterations).  Depth-0 pvars inside sub follow
+;;     the SAME global first-occurrence rule as anywhere else in the template
+;;     (the `binds` hash persists across elements, unmodified in kind); a
+;;     later (svar) occurrence within one element's match matches anything,
+;;     exactly like a later pvar occurrence (H4 pointwise remains the
+;;     oracle's business, as always) -- but the "later" reset is PER ELEMENT,
+;;     since each element gets its own first (svar) sighting;
+;; every one of those judgments -- except the shape-only ones (arity/length,
+;; and F3's binder-reuse check) -- is deferred to the expansion oracle.  Only
+;; shape is settled here -- in particular a binding form only matches a
+;; template written with that binding form, holes stand at expression
+;; positions and nothing else, and a binder position holding anything but a
+;; tvar or a pvar (an ill-formed corpus's doing, never the enumerator's) is
+;; simply no match.
 (define (skeleton-match tpl t)
   (define arity (template-arity tpl))
+  ;; current-svar-box : (Parameterof (U #f (Box (U #f (cons Path Sexpr)))))
+  ;; The first-(svar)-in-this-element bookkeeping.  Set (via parameterize) to
+  ;; a fresh box around each site element's match against an ellip's sub;
+  ;; #f outside any such match (svar never legally occurs there, by
+  ;; construction, so this default is never actually consulted).
+  (define current-svar-box (make-parameter #f))
   ;; match-binder : Any Symbol Path (HashOf Natural (cons Path Any))
   ;;               -> (U (HashOf Natural (cons Path Any)) #f)
   ;; The binder position's own judgment, parallel to the pvar/tvar cases of
@@ -394,6 +578,10 @@
            binds
            (hash-set binds (pvar-i p) (cons path t)))]
       [(tvar? p) (and (symbol? t) binds)]
+      [(svar? p)
+       (define b (current-svar-box))
+       (unless (unbox b) (set-box! b (cons path t)))
+       binds]
       [(lambda-form? p)
        (and (lambda-form? t)
             (let ([binds (match-binder (car (cadr p)) (car (cadr t))
@@ -409,6 +597,40 @@
                                       (append path '(1 0 1)) binds)])
                      (and binds
                           (walk (caddr p) (caddr t) (append path '(2)) binds))))))]
+      [(and (pair? p) (ellip? (last p)))
+       ;; The k-1 fixed elements before the ellip match positionally, exactly
+       ;; like the plain list? case below; the ellip's sub then matches each
+       ;; remaining site element independently, in order, threading `binds`
+       ;; through (so a depth-0 pvar's global first-occurrence rule sees
+       ;; every element) and collecting one sequence argument per element
+       ;; under the reserved key 'seq-args (a symbol, so it never collides
+       ;; with a pvar's natural-number key).
+       (and (list? t) (not (lambda-form? t)) (not (let-form? t))
+            (let* ([k-1 (sub1 (length p))] [sub (ellip-sub (last p))])
+              (and (>= (length t) k-1)
+                   (let fixed-loop ([pe (take p k-1)] [te (take t k-1)]
+                                     [i 0] [binds binds])
+                     (cond
+                       [(null? pe)
+                        (let elem-loop ([telems (list-tail t k-1)] [idx k-1]
+                                         [binds binds] [seq '()])
+                          (cond
+                            [(null? telems)
+                             (hash-set binds 'seq-args (reverse seq))]
+                            [else
+                             (define b (box #f))
+                             (define binds2
+                               (parameterize ([current-svar-box b])
+                                 (walk sub (car telems)
+                                       (append path (list idx)) binds)))
+                             (and binds2
+                                  (elem-loop (cdr telems) (add1 idx) binds2
+                                             (cons (unbox b) seq)))]))]
+                       [else
+                        (define binds2
+                          (walk (car pe) (car te) (append path (list i)) binds))
+                        (and binds2
+                             (fixed-loop (cdr pe) (cdr te) (add1 i) binds2))])))))]
       [(list? p)
        (and (list? t) (not (lambda-form? t)) (not (let-form? t))
             (= (length p) (length t))
@@ -417,8 +639,23 @@
               (and binds (walk pe te (append path (list i)) binds))))]
       [else (and (equal? p t) binds)]))
   (define binds (walk tpl t '() (hash)))
+  ;; A depth-0 pvar whose ONLY occurrence in the whole template lives inside
+  ;; an ellip's sub is a stage-2 possibility the enumerator does not exclude
+  ;; (nothing requires a depth-0 pvar production inside sub to be a REUSE of
+  ;; one already placed in the fixed prefix): if THIS site's ellip matches
+  ;; zero elements, sub is never walked against anything, and that pvar's
+  ;; index never enters `binds` at all -- there is no zero-th occurrence to
+  ;; fall back on. Rather than let `hash-ref` crash deep in a candidate the
+  ;; enumerator was free to propose, treat a site that cannot supply every
+  ;; pvar's argument as NO MATCH here: sound (it only narrows which sites
+  ;; match, never widens), and consistent with this function's own
+  ;; over-approximation philosophy -- the same one `(= (length p) (length
+  ;; t))` already uses elsewhere in this function to fail the shape rather
+  ;; than guess.
   (and binds
-       (for/list ([i (in-range arity)]) (hash-ref binds i))))
+       (for/and ([i (in-range arity)]) (hash-has-key? binds i))
+       (append (for/list ([i (in-range arity)]) (hash-ref binds i))
+               (hash-ref binds 'seq-args '()))))
 
 (module+ test
   (test-case "skeleton matching"
@@ -799,35 +1036,90 @@
 
 ;; expansions : Template ... Natural -> (Listof Template)
 ;; Every production this grammar allows in the leftmost hole: a plain form of
-;; a length the corpus uses, a binding form the corpus uses (with a fresh
-;; anonymous binder), a reference to a template binder in scope, a corpus
-;; identifier or literal, a pattern variable already introduced, or a fresh
-;; one if the arity limit allows.
+;; a length the corpus uses, an ellip-headed plain-form skeleton (stage 2,
+;; see below), a binding form the corpus uses (with a fresh anonymous
+;; binder), a reference to a template binder in scope, a corpus identifier or
+;; literal, a pattern variable already introduced, or a fresh one if the
+;; arity limit allows -- and, when the leftmost hole sits inside an ellip's
+;; sub, (svar) if that ellip does not have one yet.
+;;
+;; STAGE 2's TWO NEW PRODUCTION FAMILIES
+;;
+;; 1. Ellip-headed form skeletons.  Alongside each plain length n the corpus
+;;    exhibits, ALSO propose -- for each prefix length p from 1 to (max
+;;    lens) - 1 -- the skeleton (hole * p, (ellip hole)): a plain form of p
+;;    fixed positions followed by a splice.  p starts at 1, not 0: a form
+;;    always has a head, and the p=0 skeleton ((ellip hole)) alone would
+;;    skeleton-match EVERY plain form of EVERY length in EVERY program (its
+;;    "head" is itself part of the splice) -- pure junk width by a search-
+;;    width choice, not a semantic one (nothing about matching or the
+;;    expander forbids p=0; it is simply never worth the oracle calls it
+;;    would cost). These are gated by corpus-facts' own `lens`: only offered
+;;    when the corpus exhibits at least two DISTINCT plain-form lengths (the
+;;    design note's coarsest useful gate) -- on a corpus of uniformly n-ary
+;;    forms, any ellip candidate here is either shape-rejected immediately or
+;;    degenerates to matching exactly one arity, all for a guaranteed loss
+;;    -- and by `template-has-ellip?`: at most one ellip per TEMPLATE (the
+;;    session lead's amendment), so once one exists anywhere in `tpl` no
+;;    second one is ever offered, here or in the ellip-context branch below.
+;; 2. Inside an ellip's sub -- `hole-ellip-scope` says so -- the usual
+;;    productions apply EXCEPT no binder forms (lambda/let: a binder scoped
+;;    to one splice iteration abstracts nothing this corpus language can use
+;;    -- the oracle could actually handle it, since each transcribed copy
+;;    freshens its own binder, but the enumerator does not bother proposing
+;;    it) and no nested ellip (excluded by the same template-has-ellip? gate
+;;    as family 1, plus being inside an ellip already). One extra production
+;;    appears instead: (svar), offered only while this ellip's sub does not
+;;    already have one (hole-ellip-scope's has-svar? bit) -- ellip's sub
+;;    needs exactly one occurrence to be finished, not a specific count, but
+;;    offering it once it is already present would only grow needless
+;;    duplicate-svar candidates the oracle would score identically to their
+;;    single-svar parent.
 (define (expansions tpl syms lits lens binders max-arity)
   (define scope (hole-scope tpl))
   (define arity (template-arity tpl))
   (define next (template-tvars tpl))
+  (define ellip-ctx (hole-ellip-scope tpl))
+  (define in-ellip? (and ellip-ctx (car ellip-ctx)))
+  (define has-svar? (and ellip-ctx (cdr ellip-ctx)))
   ;; binder-pvars : (Listof Pvar)
   ;; The pattern variables a binder position may hold (V2): every pvar index
   ;; already in use (reuse) plus one fresh index, if the arity limit allows.
+  ;; Depth-0 pvar reuse/creation is legal inside an ellip's sub too (the
+  ;; design note's "depth-0 pvars ... inside an ellip are allowed"), so this
+  ;; list is unaffected by in-ellip? -- only its use to build BINDER forms is.
   (define binder-pvars
     (for/list ([i (in-range (if (< arity max-arity) (add1 arity) arity))])
       (pvar i)))
+  (define plain-form-productions
+    (for/list ([n (in-list lens)]) (make-list n 'hole)))
+  (define ellip-form-productions
+    (if (or in-ellip? (template-has-ellip? tpl) (< (length lens) 2))
+        '()
+        (for/list ([p (in-range 1 (apply max lens))])
+          (append (make-list p 'hole) (list (ellip 'hole))))))
+  (define binder-productions
+    (if in-ellip?
+        '()
+        (append*
+         (for/list ([b (in-list binders)])
+           (case b
+             [(lambda) (cons `(lambda (,(tvar next)) hole)
+                             (for/list ([bv (in-list binder-pvars)])
+                               `(lambda (,bv) hole)))]
+             [(let) (cons `(let ([,(tvar next) hole]) hole)
+                          (for/list ([bv (in-list binder-pvars)])
+                            `(let ([,bv hole]) hole)))])))))
+  (define svar-productions (if (and in-ellip? (not has-svar?)) (list (svar)) '()))
   (append
-   (for/list ([n (in-list lens)]) (make-list n 'hole))
-   (append*
-    (for/list ([b (in-list binders)])
-      (case b
-        [(lambda) (cons `(lambda (,(tvar next)) hole)
-                        (for/list ([bv (in-list binder-pvars)])
-                          `(lambda (,bv) hole)))]
-        [(let) (cons `(let ([,(tvar next) hole]) hole)
-                     (for/list ([bv (in-list binder-pvars)])
-                       `(let ([,bv hole]) hole)))])))
+   plain-form-productions
+   ellip-form-productions
+   binder-productions
    (for/list ([j (in-list (sort scope <))]) (tvar j))
    syms
    lits
-   binder-pvars))
+   binder-pvars
+   svar-productions))
 
 (module+ test
   (test-case "corpus facts and expansions"
@@ -841,20 +1133,68 @@
     (check-equal? binders '(lambda))
     ;; at the top of a fresh template: no tvar references are in scope, and
     ;; the lambda binder position offers both an anonymous tvar and (V2) the
-    ;; one pvar index available at arity 0
+    ;; one pvar index available at arity 0.  lens has three distinct lengths
+    ;; (>= 2), so the gate opens: prefix lengths p = 1, 2, 3 (max lens - 1 =
+    ;; 3), each an ellip-headed skeleton (hole * p, (ellip hole))
     (check-equal? (expansions 'hole syms lits lens binders 1)
                   (append '((hole hole) (hole hole hole)
                             (hole hole hole hole))
+                          (list (list 'hole (ellip 'hole))
+                                (list 'hole 'hole (ellip 'hole))
+                                (list 'hole 'hole 'hole (ellip 'hole)))
                           (list `(lambda (,(tvar 0)) hole)
                                 `(lambda (,(pvar 0)) hole))
-                          syms lits (list (pvar 0))))))
+                          syms lits (list (pvar 0))))
+    ;; inside an ellip's sub: no lambda/let productions, no nested ellip, and
+    ;; (svar) joins the tail once (since this sub has none yet)
+    (define ellip-tpl `(f ,(ellip 'hole)))
+    (define sub-expansions (expansions ellip-tpl syms lits lens binders 1))
+    (check-false (for/or ([e (in-list sub-expansions)]) (lambda-form? e)))
+    (check-false (for/or ([e (in-list sub-expansions)]) (ellip? e)))
+    (check-true (for/or ([e (in-list sub-expansions)]) (svar? e)))
+    ;; once the sub already has a svar, no second one is offered
+    (define ellip-tpl2 `(f ,(ellip (list 'g (svar) 'hole))))
+    (check-false (for/or ([e (in-list (expansions ellip-tpl2 syms lits lens
+                                                  binders 1))])
+                   (svar? e)))))
 
 ;; skeleton-programs : Template (Listof Sexpr) -> (Setof Natural)
 ;; Which programs the template skeleton-matches into, anywhere.
+;;
+;; STAGE 2 NECESSITY, discovered while measuring junk-width (not merely a
+;; quality preference -- the search does not finish in practice without it):
+;; for a template that CONTAINS AN ELLIP, a match is only counted here if it
+;; actually iterates (captures >= 1 element) SOMEWHERE.  Reason: a match that
+;; only ever succeeds via ZERO iterations (site length exactly k-1: legal
+;; per spec, see skeleton-match) never once evaluates `sub` against
+;; anything, so it gives this filter NO INFORMATION about whether `sub`'s
+;; shape is on the right track. Since matching a program's tiny existing
+;; subterms zero-iteration-style is trivially easy -- any literal fixed
+;; prefix that happens to equal some actual (short) subterm elsewhere in the
+;; corpus is such a witness, and corpora have many of these (every (g N) for
+;; every N, for instance) -- an ellip candidate can satisfy the ">= 2
+;; programs" bar via such coincidences ALONE, with `sub` never once
+;; constrained by anything real.  Measured consequence before this guard: a
+;; single small 3-program benchmark exploded past 900,000 open candidates by
+;; enumeration level 7 (and climbing), because `sub` was then free to
+;; re-explore the ENTIRE top-level template grammar completely unconstrained,
+;; once per coincidentally-matching fixed prefix.  Requiring a REAL (>= 1
+;; element) witness closes exactly that hole: `sub` only survives to be grown
+;; further once some program has actually forced it to match something.
+;; This changes nothing about MATCHING or SCORING semantics -- a finished
+;; candidate's zero-iteration sites remain perfectly legal at valid-sites
+;; time (skeleton-match and site-valid? are untouched) -- it only sharpens
+;; the coarse STRUCTURAL PRE-FILTER this function exists to be (its own
+;; docstring already calls it "a sound over-approximation, used to prune");
+;; for a template with NO ellip, `has-ellip?` is #f and this is exactly the
+;; pre-ellipsis check, unchanged.
 (define (skeleton-programs tpl programs)
+  (define has-ellip? (template-has-ellip? tpl))
+  (define arity (template-arity tpl))
   (for/set ([p (in-list programs)] [k (in-naturals)]
             #:when (for/or ([pos (in-list (expr-positions p))])
-                     (and (skeleton-match tpl (cdr pos)) #t)))
+                     (define args (skeleton-match tpl (cdr pos)))
+                     (and args (or (not has-ellip?) (> (length args) arity)))))
     k))
 
 ;; reject? : Template (Listof Sexpr) -> Boolean
@@ -914,7 +1254,20 @@
                      [child (in-value (fill-hole tpl piece))]
                      #:unless (reject? child programs))
            child))
-       (define-values (done open) (partition finished? children))
+       (define-values (done rest) (partition finished? children))
+       ;; Stage 2 wrinkle: finished? no longer follows from "no hole left".
+       ;; A depth-0 pvar or a corpus symbol/literal can fill an ellip's ONLY
+       ;; hole without ever placing an (svar) in its sub -- legal productions
+       ;; to offer there (depth-0 references are allowed inside sub), but the
+       ;; result has nothing controlling its iteration, so finished? (rightly)
+       ;; refuses it. Such a child is a DEAD END, not an open candidate:
+       ;; `expansions` assumes hole-scope is truthy (a hole exists to grow),
+       ;; and there is none left here to fill.  Filtering `rest` down to
+       ;; children that still HAVE a hole drops the dead ends instead of
+       ;; forwarding them into a `level` call that would crash on a hole-less
+       ;; template.  They are simply never completable, so dropping them
+       ;; silently is correct, not merely convenient.
+       (define open (filter hole-scope rest))
        (level open (append found done))])))
 
 ;; best-candidate : (Listof MDef) (Listof Template) (Listof Sexpr)
@@ -1092,6 +1445,81 @@
 
   (test-case "nothing shared, nothing learned"
     (check-false (macro-search '((f 1) (g 2))))))
+
+;; ---------------------------------------------------------------------------
+;; Ellipses (stage 2): rendering, matching, the oracle, end to end
+;; ---------------------------------------------------------------------------
+;; notes/2026-08-18-1324-ellipses-design.md sections 2-5, as amended (module
+;; header above): one ellip per template, its sequence variable a distinct
+;; (svar) node rather than a numbered pvar.
+
+(module+ test
+  (test-case "ellipses: rendering and cost"
+    ;; (f (ellip (g (svar)))) -- "f applied to (g X) ... splice"
+    (define T `(f ,(ellip (list 'g (svar)))))
+    (check-equal? (render-template T) '(f (g %xs) ...))
+    ;; arity 0 (no pvar anywhere), so the rendered pattern is bare (_ %xs ...)
+    (check-equal? (template-arity T) 0)
+    (check-equal? (mdef-syntax-rules (mdef 'm0 0 T))
+                  '(syntax-rules () [(_ %xs ...) (f (g %xs) ...)]))
+    ;; cost by hand: outer form 1 + f 100 + ellip's `...` 100 + inner form 1
+    ;; + g 100 + svar 0 = 302
+    (check-equal? (sexpr-cost T) 302))
+
+  (test-case "ellipses: skeleton-match"
+    (define T `(f ,(ellip (list 'g (svar)))))
+    ;; three matched elements: each contributes (path-of-its-svar . value),
+    ;; the svar sitting at index 1 inside the (g _) at site index 1, 2, 3
+    (check-equal? (skeleton-match T '(f (g 1) (g 2) (g 3)))
+                  (list (cons '(1 1) 1) (cons '(2 1) 2) (cons '(3 1) 3)))
+    ;; zero iterations (site length exactly k-1 = 1) is a legal match with no
+    ;; sequence arguments
+    (check-equal? (skeleton-match T '(f)) '())
+    ;; a site element that does not fit sub's shape (h, not g) is no match
+    (check-false (skeleton-match T '(f (g 1) (h 2)))))
+
+  (test-case "ellipses: mixed fixed pvar and sequence arguments"
+    ;; (f #0 (g (svar)) ...) -- one ordinary pvar before the splice
+    (define T `(f ,(pvar 0) ,(ellip (list 'g (svar)))))
+    ;; pvar arg first (path (1), value 9), then the sequence args in order
+    (check-equal? (skeleton-match T '(f 9 (g 1) (g 2)))
+                  (list (cons '(1) 9) (cons '(2 1) 1) (cons '(3 1) 2))))
+
+  (test-case "ellipses: the oracle accepts, rewrites, and enforces H2"
+    (define T `(f ,(ellip (list 'g (svar)))))
+    (define prog '(f (g 1) (g 2)))
+    (define expanded (expand-under '() prog))
+    (check-equal? (valid-sites '() 'm0 T prog expanded)
+                  (hash '() (list (cons '(1 1) 1) (cons '(2 1) 2))))
+    (define-values (rewritten _) (rewrite-corpus '() 'm0 T (list prog)))
+    (check-equal? rewritten (list '(m0 1 2)))
+    ;; H2 under ellipsis: the identical fold-shape, but its `g` is a LOCAL
+    ;; binding at the site -- the template's free `g` means the global one,
+    ;; so every site inside this let is refused, and none survive elsewhere
+    (define shadowed '(let ([g (lambda (p) p)]) (f (g 1) (g 2))))
+    (check-equal? (valid-sites '() 'm0 T shadowed (expand-under '() shadowed))
+                  (hash)))
+
+  (test-case "ellipses: end-to-end benchmark"
+    ;; the micro benchmark from the design note (section 5), corpus lengths
+    ;; 3, 4, 5 -- all distinct, so no fixed-arity template can ever cover two
+    ;; of them (the >=2-programs filter refuses every one), leaving the
+    ;; ellip template as the only real competitor
+    (define programs '((f (g 1) (g 2))
+                       (f (g a) (g b) (g c))
+                       (f (g h) (g 1) (g 2) (g p))))
+    (define T (macro-search programs 2))
+    (check-equal? T `(f ,(ellip (list 'g (svar)))))
+    ;; corpus-cost by hand: (f (g1)(g2)) 3 forms/5 atoms=503;
+    ;; (f (ga)(gb)(gc)) 4 forms/7 atoms=704; (f (gh)(g1)(g2)(gp)) 5 forms/9
+    ;; atoms=905; total 2112.  macro-cost 302 (as above).  Rewritten calls:
+    ;; (m0 1 2) 1+100+100+100=301; (m0 a b c) 1+100+300=401;
+    ;; (m0 h 1 2 p) 1+100+400=501; after=1203.
+    ;; utility = 2112 - 1203 - 302 = 607
+    (check-equal? (macro-utility '() T programs) 607)
+    (define-values (rewritten after) (rewrite-corpus '() 'm0 T programs))
+    (check-equal? rewritten '((m0 1 2) (m0 a b c) (m0 h 1 2 p)))
+    (check-equal? after 1203)))
 
 ;; ---------------------------------------------------------------------------
 ;; Iteration
