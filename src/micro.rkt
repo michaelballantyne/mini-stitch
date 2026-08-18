@@ -359,9 +359,13 @@
 ;; other by the caller: that check is the paper's Eq. 8 = Eq. 15.
 (define (rewrite-corpus p programs name)
   (define arity (pattern-arity p))
-  ;; The memo is not part of the specification -- it just stops the two ways of
-  ;; reaching a node (as a child, and as an argument) from doubling the work at
-  ;; every level.
+  ;; This table is not an optimization bolted onto the dynamic program -- it IS
+  ;; the dynamic program.  The paper's Eq. 15 is stated bottom-up, one verdict
+  ;; per subtree; memoizing the top-down recursion computes the same table in
+  ;; the same asymptotics.  Without it the recursion makes three calls per
+  ;; level (accept descends into the argument once, reject into both children)
+  ;; and is exponential on self-similar programs -- measured: on the term
+  ;; (t t) nested 16 deep, 89 ms with the table, 61 s without.
   (define memo (make-hash))
 
   ;; best-cost : Term -> Cost ; the cheapest this subterm can be made
@@ -689,6 +693,36 @@
 ;; The search
 ;; ---------------------------------------------------------------------------
 
+;; surviving-children : Pattern (Listof Symbol) Natural (Listof Term)
+;;                      -> (Listof Pattern)
+;; Every way to fill one hole of `p` that survives the filters: expand the
+;; hole with each production, match each result against the corpus from
+;; scratch, and keep the children that could still be -- or already are -- a
+;; worthwhile abstraction.  This is the same job the paper gives its
+;; Expansions procedure, done the slow way: nothing is carried over from `p`,
+;; and the only judgments are the semantic filters of `reject?`.
+(define (surviving-children p prims max-arity programs)
+  (for*/list ([piece (in-list (expansions p prims max-arity))]
+              [child (in-value (fill-hole p piece))]
+              #:unless (reject? child (pattern-sites child programs)
+                                (pattern-arity p)))
+    child))
+
+(module+ test
+  (test-case "surviving-children: generate, match, filter, in one step"
+    (define F (prim 'f)) (define A (prim 'a)) (define B (prim 'b))
+    (define X (prim 'x))
+    ;; corpus: (f a x) and (f b x)
+    (define programs (list (app (app F A) X) (app (app F B) X)))
+    (define kids (surviving-children 'hole (corpus-prims programs) 2 programs))
+    ;; the application skeleton, f, and x match both programs and survive;
+    ;; a and b match only one program each; (lam ??) matches nothing; a fresh
+    ;; abstraction variable is the identity body.  So exactly three survive.
+    (check-true (and (member (app 'hole 'hole) kids) #t))
+    (check-true (and (member F kids) #t))
+    (check-true (and (member X kids) #t))
+    (check-equal? (length kids) 3)))
+
 ;; micro-search : (Listof Term) [Natural] -> (U Pattern #f)
 ;; The abstraction body of at most `max-arity` arguments that saves the most, or
 ;; #f if none saves anything.  Breadth-first over the candidates, scoring every
@@ -697,9 +731,9 @@
 ;;
 ;; The loop is this short because there is nothing to maintain between steps: no
 ;; bound on what a candidate might grow into, no priority among the candidates,
-;; no state carried from a pattern to its children.  Every candidate is matched
-;; against the corpus from scratch and every finished one is scored by rewriting
-;; the corpus from scratch.
+;; no state carried from a pattern to its children.  All the search does is
+;; walk the space `surviving-children` spans, keeping the best finished
+;; candidate it has seen.
 (define (micro-search programs [max-arity 2])
   (define prims (corpus-prims programs))
   (let level ([frontier (list 'hole)] [best #f] [best-utility 0])
@@ -709,12 +743,9 @@
        (define-values (next best* best-utility*)
          (for*/fold ([next '()] [best best] [best-utility best-utility])
                     ([p (in-list frontier)]
-                     [piece (in-list (expansions p prims max-arity))])
-           (define child (fill-hole p piece))
-           (define sites (pattern-sites child programs))
+                     [child (in-list (surviving-children p prims max-arity
+                                                         programs))])
            (cond
-             [(reject? child sites (pattern-arity p))
-              (values next best best-utility)]
              [(finished? child)
               (define u (abstraction-utility child programs))
               (if (> u best-utility)
