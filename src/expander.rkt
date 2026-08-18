@@ -7,8 +7,9 @@
 ;;
 ;; This is the paper's model expander -- marks, scope graphs with disjoin
 ;; nodes, syntax-rules matching and transcription -- taken verbatim except for
-;; three additions that macro-micro.rkt needs to use it as its semantic oracle
-;; (see notes/2026-08-18-0323-syntax-rules-learning-design.md, addendum A):
+;; four additions that macro-micro.rkt needs to use it as its semantic oracle
+;; (see notes/2026-08-18-0323-syntax-rules-learning-design.md, addendum A,
+;; and notes/2026-08-18-1324-ellipses-design.md for the fourth):
 ;;
 ;;   1. `lambda`, one binder and one body form, expanded exactly like the
 ;;      binding half of `let`;
@@ -19,6 +20,13 @@
 ;;      unbound identifiers with the same name mean the same global, whichever
 ;;      site they were written at.  It is also exactly the both-unbound arm of
 ;;      this file's own `literal-match?`.
+;;   4. syntax-rules patterns and templates support one trailing ellipsis
+;;      element per list, at ellipsis depth 1: a pattern `(p .. sub ...)`
+;;      binds sub's pattern variables to the SEQUENCE of their per-element
+;;      matches, and a template `(t .. sub ...)` transcribes sub once per
+;;      element of that sequence, splicing the copies in. This is what makes
+;;      variadic macros like `(define-syntax-rule (m x ...) (f x ...))`
+;;      expressible.
 ;;
 ;; Everything else -- including definition contexts and macro-defining macros,
 ;; which the learner does not use yet -- is the paper's code, kept intact so
@@ -301,12 +309,80 @@
          (try-clauses rest expr is-literal? literal-match?))]
     ['() (error 'syntax-rules "no pattern matched")]))
 
-;; This implementation of syntax-rules matching omits ellipses (as well as datatypes
-;; not supported in the input language, such as vectors and boolean literals)
+;; This implementation of syntax-rules matching supports ellipses at ellipsis
+;; depth 1, one per list, trailing position only [extension] -- see
+;; match-pattern's ellipsis case below and
+;; notes/2026-08-18-1324-ellipses-design.md. It still omits datatypes not
+;; supported in the input language, such as vectors.
 (define (match-top-pattern pat expr is-literal? literal-match?)
   ;; The `car` of the `expr` is the macro name, and in syntax-rules
   ;; the `car` of the `pat` stands for the macro name and is ignored.
   (match-pattern (cdr pat) (cdr expr) is-literal? literal-match?))
+
+;; [extension] Is this identifier the ellipsis marker `...`? Checked
+;; structurally (by symbol only, ignoring marks): the ellipsis is a
+;; structural marker in pattern/template position, never a pattern variable
+;; or a hygienically-tracked free identifier. This predicate is only ever
+;; applied to elements read out of a pattern or template by match-pattern /
+;; transcribe, so it cannot misfire on the `...` that Racket's own `match`
+;; uses at the meta level elsewhere in this file (e.g. in select-syntax-rule).
+(define (ellipsis-id? x)
+  (and (identifier? x) (eq? (identifier-symbol x) '...)))
+
+;; (ListOf Any) -> Natural
+;; The length of a proper cons/'() list. Used both for actual target lists
+;; and for the fixed pattern-suffix after an ellipsis (which this rung never
+;; itself contains a further ellipsis, so it is always a plain proper list).
+(define (proper-length lst)
+  (match lst
+    ['() 0]
+    [(cons _ d) (+ 1 (proper-length d))]))
+
+;; Pattern, (Identifier -> Boolean) -> (Listof Identifier)              [extension]
+;; All the pattern variables occurring anywhere in a pattern (literals and
+;; the `...` marker excluded). Used to find which variables an ellipsis's
+;; sub-pattern binds, so they can be bound at depth 1 even when the
+;; ellipsis matches zero elements.
+(define (pattern-vars pat is-literal?)
+  (match pat
+    [(? identifier? id)
+     #:when (and (not (is-literal? id)) (not (ellipsis-id? id)))
+     (list id)]
+    [(cons pa pd) (append (pattern-vars pa is-literal?) (pattern-vars pd is-literal?))]
+    [_ '()]))
+
+;; Pattern, (Listof PatternEnv), (Identifier -> Boolean) -> PatternEnv   [extension]
+;; Merge the per-element envs produced by matching an ellipsis's sub-pattern
+;; against each matched element into one depth-1 env: each pattern variable
+;; in sub-pat maps to the list of its per-element (depth-0) values, in
+;; order -- the empty list when there were zero elements.
+(define (merge-ellipsis-envs sub-pat sub-envs is-literal?)
+  (define vars (remove-duplicates (pattern-vars sub-pat is-literal?)))
+  (for/fold ([acc (hash)]) ([v (in-list vars)])
+    (hash-set acc v (cons 1 (for/list ([env (in-list sub-envs)])
+                              (cdr (hash-ref env v)))))))
+
+;; Pattern, Pattern, Any, ... -> (or PatternEnv #f)                     [extension]
+;; Match a pattern `(sub-pat ... . prest-pat)` -- prest-pat is the fixed
+;; pattern after the ellipsis, empty in the trailing case this rung needs --
+;; against the corresponding tail of the target list. sub-pat consumes
+;; elements deterministically: exactly enough that (proper-length
+;; prest-pat) target elements remain for prest-pat. Zero elements is a legal
+;; match.
+(define (match-ellipsis-pattern sub-pat prest-pat ex is-literal? literal-match?)
+  (and (list? ex)
+       (let* ([suffix-len (proper-length prest-pat)]
+              [n (length ex)])
+         (and (>= n suffix-len)
+              (let-values ([(rep-elems suffix-elems) (split-at ex (- n suffix-len))])
+                (define sub-envs
+                  (for/list ([e (in-list rep-elems)])
+                    (match-pattern sub-pat e is-literal? literal-match?)))
+                (and (andmap values sub-envs)
+                     (let ([rep-env (merge-ellipsis-envs sub-pat sub-envs is-literal?)]
+                           [suffix-env (match-pattern prest-pat suffix-elems is-literal? literal-match?)])
+                       (and suffix-env
+                            (hash-union rep-env suffix-env)))))))))
 
 (define (match-pattern pat expr is-literal? literal-match?)
   (match* (pat expr)
@@ -315,15 +391,22 @@
      #:when (is-literal? lit)
      (and (literal-match? lit target-id)
           (hash))]
-    ;; pvar
+    ;; pvar -- bound at ellipsis depth 0: a single syntax value.  [extension]:
+    ;; depth-tagged as (cons 0 stx) so the ellipsis case below can share this
+    ;; env representation with its own depth-1 bindings.
     [((? identifier? pvar) stx)
-     #:when (not (is-literal? pvar))
-     (hash pvar stx)]
+     #:when (and (not (is-literal? pvar)) (not (ellipsis-id? pvar)))
+     (hash pvar (cons 0 stx))]
     ;; datum literal
     [((? number? v) v)
      (hash)]
     [((? boolean? v) v)                    ; [extension] #t / #f literals
      (hash)]
+    ;; [extension] ellipsis: pattern `(sub-pat ... . prest-pat)` against the
+    ;; matching tail of the target list -- see match-ellipsis-pattern.
+    [(`(,sub-pat ,ellip . ,prest-pat) ex)
+     #:when (ellipsis-id? ellip)
+     (match-ellipsis-pattern sub-pat prest-pat ex is-literal? literal-match?)]
     ;; cons
     [(`(,pa . ,pd) `(,ea . ,ed))
      (let ([resa (match-pattern pa ea is-literal? literal-match?)])
@@ -334,14 +417,68 @@
     [('() '()) (hash)]
     [(_ _) #f]))
 
+;; Template, PatternEnv -> (Listof Identifier)                         [extension]
+;; The identifiers occurring in a template that are bound in penv at
+;; ellipsis depth 1 -- exactly the variables that can control how many
+;; times an ellipsis's sub-template repeats.
+(define (template-depth1-vars tmpl penv)
+  (match tmpl
+    [(? identifier? id)
+     #:when (and (hash-has-key? penv id) (= (car (hash-ref penv id)) 1))
+     (list id)]
+    [(cons a d) (append (template-depth1-vars a penv) (template-depth1-vars d penv))]
+    [_ '()]))
+
+;; Template, PatternEnv, Mark -> (Listof Syntax)                        [extension]
+;; Transcribe a template ellipsis's sub-template once per index of its
+;; controlling depth-1 pattern variables (found by template-depth1-vars),
+;; with the env overridden so each maps, at depth 0, to its i-th element;
+;; the def-mark is applied to template identifiers by transcribe itself,
+;; independently for each copy, exactly as for any other template -- no new
+;; freshening machinery is needed. Errors if nothing controls the
+;; iteration, or if the controlling sequences disagree on length.
+(define (transcribe-ellipsis sub-tmpl penv def-mark)
+  (define ctrl-vars (remove-duplicates (template-depth1-vars sub-tmpl penv)))
+  (when (null? ctrl-vars)
+    (error 'transcribe
+           "ellipsis template has no pattern variable at depth 1 to control its length: ~a"
+           sub-tmpl))
+  (define lengths (for/list ([v (in-list ctrl-vars)]) (length (cdr (hash-ref penv v)))))
+  (unless (andmap (lambda (l) (= l (car lengths))) lengths)
+    (error 'transcribe
+           "ellipsis's pattern variables disagree on length: ~a"
+           (map cons (map identifier-symbol ctrl-vars) lengths)))
+  (define n (car lengths))
+  (for/list ([i (in-range n)])
+    (define penv^
+      (for/fold ([e penv]) ([v (in-list ctrl-vars)])
+        (hash-set e v (cons 0 (list-ref (cdr (hash-ref penv v)) i)))))
+    (transcribe sub-tmpl penv^ def-mark)))
+
 ;; Syntax, PatternEnv, Mark -> Syntax
 (define (transcribe tmpl penv def-mark)
   (match tmpl
+    ;; pvar -- depth 0 transcribes to its single bound syntax value; using a
+    ;; depth-1 variable outside of an ellipsis is a syntax-rules error, not
+    ;; something the expander should silently mis-transcribe.  [extension]:
+    ;; depth check.
     [(? identifier? pvar)
      #:when (hash-has-key? penv pvar)
-     (hash-ref penv pvar)]
+     (match (hash-ref penv pvar)
+       [(cons 0 stx) stx]
+       [(cons 1 _)
+        (error 'transcribe
+               "pattern variable ~a used at ellipsis depth 1 outside of an ellipsis"
+               (identifier-symbol pvar))])]
     [(? identifier? id)
      (mark-id id def-mark)]
+    ;; [extension] ellipsis: template `(sub-tmpl ... . rest-tmpl)` splices in
+    ;; one transcription of sub-tmpl per element of its controlling depth-1
+    ;; variables, then continues with rest-tmpl (empty in the trailing case
+    ;; this rung needs).
+    [(cons sub-tmpl (cons (? ellipsis-id?) rest-tmpl))
+     (append (transcribe-ellipsis sub-tmpl penv def-mark)
+             (transcribe rest-tmpl penv def-mark))]
     [(cons a d)
      (cons (transcribe a penv def-mark)
            (transcribe d penv def-mark))]
@@ -446,4 +583,78 @@
       (block (begin)
              (define f.1 (lambda (x.3) x.2))
              (define x.2 6)
-             (f.1 7)))))
+             (f.1 7))))
+
+  ;; [extension] Ellipses, depth 1, trailing position: (a) plain splice at
+  ;; 0/1/3 arguments -- the same macro clause covers every arity.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x ...)])])
+              (m)))
+   '(f))
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x ...)])])
+              (m 1)))
+   '(f 1))
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x ...)])])
+              (m 1 2 3)))
+   '(f 1 2 3))
+
+  ;; (b) structure under the ellipsis: each element is wrapped, not just
+  ;; copied.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f (g x) ...)])])
+              (m 1 2 3)))
+   '(f (g 1) (g 2) (g 3)))
+
+  ;; (c) a fixed prefix ahead of the ellipsis.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ a x ...) (f a (g x) ...)])])
+              (m 0 1 2 3)))
+   '(f 0 (g 1) (g 2) (g 3)))
+
+  ;; (d) hygiene under iteration: the template's own binder `t` must freshen
+  ;; away from a `t` supplied, once per spliced argument, by the use site.
+  ;; Both use-site `t`s share one identity (they're the same reference,
+  ;; expanded twice), and the template `t` is a second, distinct identity.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (lambda (t) (f t x ...))])])
+              (lambda (t) (m t t))))
+   '(lambda (t.1) (lambda (t.2) (f t.2 t.1 t.1))))
+
+  ;; (e) a template binder INSIDE the ellipsis: each copy freshens its own
+  ;; `t`, independently of the others -- not one shared binder split across
+  ;; iterations.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f (lambda (t) (h t x)) ...)])])
+              (m 1 2)))
+   '(f (lambda (t.1) (h t.1 1)) (lambda (t.2) (h t.2 2))))
+
+  ;; (f) H2 under iteration: the template's free `f`, repeated once per
+  ;; spliced element, still resolves at the definition site even where the
+  ;; use site has shadowed `f`.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x ...)])])
+              (let ([f 1]) (m f))))
+   '(let ([f.1 1]) (f f.1)))
+
+  ;; (g) depth errors, kept honest rather than silently mis-transcribed.
+  ;; A depth-1 variable used outside of any ellipsis:
+  (check-exn exn:fail?
+             (lambda ()
+               (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x)])])
+                          (m 1 2)))))
+  ;; An ellipsis whose sub-template has no depth-1 pattern variable at all --
+  ;; here `a` is bound, but only at depth 0, so nothing controls how many
+  ;; times to repeat.
+  (check-exn exn:fail?
+             (lambda ()
+               (expand '(let-syntax ([m (syntax-rules () [(_ a x ...) (f a ...)])])
+                          (m 1 2 3)))))
+
+  ;; (h) zero-iteration edge: the ellipsis is legal to match against nothing,
+  ;; and splices in nothing.
+  (check-equal?
+   (expand '(let-syntax ([m (syntax-rules () [(_ x ...) (f x ...)])])
+              (m)))
+   '(f)))
